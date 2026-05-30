@@ -117,6 +117,46 @@ Return JSON with this exact shape:
   return completeJson({ system, prompt, maxTokens: 2000 });
 }
 
+// Designs a persona + content plan straight from the onboarding chat answers
+// (no scraped sources). Returns a compact shape the onboarding UI renders.
+export async function designOnboardingCharacter({ answers }) {
+  log.info("Designing onboarding character");
+  const system =
+    "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
+    "From a few short onboarding answers you invent a complete, believable creator and the content they post. " +
+    "Be specific and concrete. Always respond with strict JSON only.";
+
+  const prompt = `Design an AI influencer character from these onboarding answers.
+
+Onboarding answers (question -> answer):
+${JSON.stringify(answers || {}, null, 2)}
+
+Return JSON with this exact shape:
+{
+  "displayName": string,            // an inventive, real-sounding creator name
+  "tagline": string,                // <= 60 chars, the character in one line
+  "handleSuggestions": string[3],   // lowercase instagram handles, no spaces or @
+  "niche": string,
+  "bio": string,                    // <= 150 chars instagram bio with light emoji
+  "personality": string,            // 2-3 sentences, first impression of who they are
+  "appearance": string,             // vivid physical description for image generation
+  "aesthetic": string,              // visual mood: lighting, palette, vibe
+  "contentPillars": string[4],      // recurring topics they post about
+  "contentFormats": string[3],      // e.g. "talking-head reels", "day-in-the-life vlogs"
+  "samplePosts": [                  // 3 concrete posts this character would publish
+    { "hook": string, "caption": string }
+  ],
+  "postingStrategy": {
+    "postsPerDay": number,
+    "bestTimes": string[],
+    "hashtagThemes": string[]
+  },
+  "imagePrompt": string             // a single rich prompt describing the character's portrait
+}`;
+
+  return completeJson({ system, prompt, maxTokens: 2000 });
+}
+
 // Generates a commentary-style short-form video script in the persona's voice.
 export async function generateScript({ persona, topic }) {
   log.info("Generating script", topic ? `on "${topic}"` : "");

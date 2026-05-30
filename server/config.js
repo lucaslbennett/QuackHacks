@@ -53,6 +53,8 @@ export const config = {
   fal: {
     apiKey: process.env.FAL_KEY || process.env.FAL_API_KEY || "",
     imageModel: process.env.FAL_IMAGE_MODEL || "fal-ai/flux/dev",
+    // Nano Banana (text-to-image) used for the onboarding character preview.
+    nanoBananaModel: process.env.FAL_NANO_BANANA_MODEL || "fal-ai/nano-banana",
     videoModel: process.env.FAL_VIDEO_MODEL || "fal-ai/kling-video/v1.6/standard/image-to-video",
   },
 

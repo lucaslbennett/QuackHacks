@@ -4,13 +4,15 @@ import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
 import Dashboard from "./components/Dashboard";
-import GenerateScreen from "./components/GenerateScreen";
+import Onboarding from "./components/Onboarding";
 import TestPanel from "./components/TestPanel";
 
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
-  const [generatePrompt, setGeneratePrompt] = useState<string | null>(null);
+  // null = closed; string (possibly empty) = onboarding open, seeded with the
+  // text the user typed in the hero composer.
+  const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
 
   return (
     <AuthProvider>
@@ -27,15 +29,19 @@ export default function App() {
           <Dashboard />
         ) : (
           <>
-            <Hero onGenerate={setGeneratePrompt} />
+            <Hero onGenerate={setOnboardSeed} />
             <TestPanel />
           </>
         )}
 
-        {generatePrompt && (
-          <GenerateScreen
-            prompt={generatePrompt}
-            onClose={() => setGeneratePrompt(null)}
+        {onboardSeed !== null && (
+          <Onboarding
+            seed={onboardSeed}
+            onClose={() => setOnboardSeed(null)}
+            onComplete={() => {
+              setOnboardSeed(null);
+              setShowDashboard(true);
+            }}
             onRequireSignIn={() => setAuthMode("signup")}
           />
         )}
@@ -47,9 +53,9 @@ export default function App() {
             onSwitchMode={setAuthMode}
             onSuccess={() => {
               setAuthMode(null);
-              // If a generation is in progress, stay on it so the user can now
-              // save; otherwise land on the dashboard.
-              if (!generatePrompt) setShowDashboard(true);
+              // If onboarding is open, stay on it so the user can now launch
+              // their influencer; otherwise land on the dashboard.
+              if (onboardSeed === null) setShowDashboard(true);
             }}
           />
         )}

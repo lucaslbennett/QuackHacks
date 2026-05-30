@@ -44,11 +44,11 @@ export const sessions = {
 };
 
 export const generations = {
-  create: ({ userId, prompt, imageUrl }) =>
+  create: ({ userId, prompt, imageUrl, persona }) =>
     one(
-      `INSERT INTO generations (user_id, prompt, image_url)
-       VALUES ($1,$2,$3) RETURNING *`,
-      [userId, prompt, imageUrl]
+      `INSERT INTO generations (user_id, prompt, image_url, persona)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [userId, prompt, imageUrl, persona || {}]
     ),
   listFor: (userId) =>
     many(

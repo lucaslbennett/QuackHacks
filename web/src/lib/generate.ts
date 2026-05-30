@@ -14,6 +14,53 @@ interface GenerateResponse {
   error?: string;
 }
 
+// The full character the onboarding chat designs (persona + content plan).
+export interface Character {
+  displayName: string;
+  tagline: string;
+  handleSuggestions: string[];
+  niche: string;
+  bio: string;
+  personality: string;
+  appearance: string;
+  aesthetic: string;
+  contentPillars: string[];
+  contentFormats: string[];
+  samplePosts: { hook: string; caption: string }[];
+  postingStrategy: {
+    postsPerDay: number;
+    bestTimes: string[];
+    hashtagThemes: string[];
+  };
+  imagePrompt: string;
+}
+
+interface OnboardingResponse {
+  ok: boolean;
+  character?: Character;
+  imageUrl?: string;
+  error?: string;
+}
+
+// Public: design a full character (persona + content plan) from onboarding chat
+// answers and render its portrait with Nano Banana on fal.ai.
+export async function generateOnboardingCharacter(
+  answers: Record<string, string>,
+): Promise<{ character: Character; imageUrl: string }> {
+  const res = await fetch("/api/generate/onboarding-character", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ answers }),
+  });
+  const data: OnboardingResponse = await res
+    .json()
+    .catch(() => ({ ok: false }) as OnboardingResponse);
+  if (!res.ok || data.ok === false || !data.character || !data.imageUrl) {
+    throw new Error(data.error || `Character generation failed (${res.status})`);
+  }
+  return { character: data.character, imageUrl: data.imageUrl };
+}
+
 // Public: generate an influencer image from a description (Nano Banana Pro).
 export async function generateInfluencerImage(
   prompt: string,
@@ -30,10 +77,12 @@ export async function generateInfluencerImage(
   return { prompt: data.prompt ?? prompt, imageUrl: data.imageUrl };
 }
 
-// Auth required: persist a generated image to the user's dashboard.
+// Auth required: persist a generated image (and optional character) to the
+// user's dashboard.
 export async function saveGeneration(
   prompt: string,
   imageUrl: string,
+  persona?: Character,
 ): Promise<void> {
   const token = getToken();
   if (!token) throw new Error("You must be signed in to save");
@@ -43,7 +92,7 @@ export async function saveGeneration(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ prompt, imageUrl }),
+    body: JSON.stringify({ prompt, imageUrl, persona }),
   });
   const data = await res.json().catch(() => ({ ok: false }));
   if (!res.ok || data.ok === false) {

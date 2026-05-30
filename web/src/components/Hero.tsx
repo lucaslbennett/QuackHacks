@@ -150,6 +150,11 @@ export default function Hero({
             <button
               key={label}
               type="button"
+              onClick={
+                label === "Launch my AI influencer"
+                  ? () => onGenerate("")
+                  : undefined
+              }
               className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-black px-4 py-[0.3em] text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black sm:px-5 sm:text-[15px]"
             >
               {label}

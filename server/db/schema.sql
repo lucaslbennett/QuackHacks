@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS generations (
 
 CREATE INDEX IF NOT EXISTS generations_user_idx ON generations (user_id, created_at DESC);
 
+-- Full character (persona + content plan) for generations created via the
+-- onboarding chat. Added after the initial release; empty for older rows.
+ALTER TABLE generations ADD COLUMN IF NOT EXISTS persona JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS influencers (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,

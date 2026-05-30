@@ -42,6 +42,36 @@ export async function generateImage({ prompt, influencerId, label = "img", image
   return { url, path: out };
 }
 
+// Generates an influencer portrait with Nano Banana on fal.ai and saves it
+// locally. Distinct from the Gemini path so onboarding can run on the fal key.
+// Returns { url, path }.
+export async function generateNanoBananaImage({
+  prompt,
+  influencerId,
+  label = "influencer",
+}) {
+  ensureConfig();
+  log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
+
+  const fullPrompt =
+    "Photorealistic, high-quality portrait of a social-media influencer for an " +
+    "AI influencer platform. Natural lighting, modern aesthetic, looks like a real " +
+    `person posting on Instagram. Description: ${prompt}`;
+
+  const result = await fal.subscribe(config.fal.nanoBananaModel, {
+    input: { prompt: fullPrompt, num_images: 1 },
+    logs: false,
+  });
+  const url = result?.data?.images?.[0]?.url || result?.images?.[0]?.url;
+  if (!url) throw new Error("Nano Banana returned no image");
+  const out = await mediaPath(
+    influencerId || "previews",
+    `${label}-${Date.now()}.jpg`
+  );
+  await downloadTo(url, out);
+  return { url, path: out };
+}
+
 // Generates an image-to-video clip from a still. Returns { url, path }.
 export async function generateVideoFromImage({ imageUrl, prompt, influencerId, label = "clip" }) {
   ensureConfig();
