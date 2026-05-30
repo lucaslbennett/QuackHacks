@@ -11,7 +11,7 @@ const PILL_BUTTONS = [
   "See how we operate",
 ] as const;
 
-const EMAIL = "hello@mainframe.co";
+const EMAIL = "hello@fasto.co";
 
 function CopyIcon() {
   return (

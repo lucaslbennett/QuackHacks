@@ -14,14 +14,7 @@ export default function Navbar() {
             className="text-[21px] tracking-tight text-white sm:text-[26px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
-            Mainframe®
-          </span>
-          <span
-            className="select-none text-[25px] text-white sm:text-[30px]"
-            style={{ letterSpacing: "-0.02em" }}
-            aria-hidden
-          >
-            ✳︎
+            Fasto
           </span>
         </div>
 
