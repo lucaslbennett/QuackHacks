@@ -1,0 +1,15 @@
+# Railway / Nixpacks build configuration.
+# ffmpeg is required by the video assembly pipeline (server/services/video.js).
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "ffmpeg"]
+
+[phases.install]
+cmds = ["npm install --no-audit --no-fund"]
+
+[phases.build]
+# Builds the React dashboard into web/dist, which the Express server serves.
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"
