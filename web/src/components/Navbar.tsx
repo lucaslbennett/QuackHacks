@@ -36,9 +36,14 @@ export default function Navbar({
     <>
       <header className="fixed top-0 z-[57] flex w-full items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
         {/* Logo */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <img
+            src="/images/fasto-logo.png"
+            alt="Fasto logo"
+            className="h-6 w-auto sm:h-7"
+          />
           <span
-            className="text-[21px] tracking-tight text-black sm:text-[26px]"
+            className="text-[26px] tracking-tight text-black sm:text-[32px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
             Fasto
