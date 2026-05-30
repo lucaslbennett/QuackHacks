@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AuthProvider from "./components/AuthProvider";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
@@ -14,6 +14,28 @@ export default function App() {
   // text the user typed in the hero composer.
   const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
 
+  // Leaving onboarding simply unmounts it, which discards all in-progress
+  // state (answers, generated character) since nothing is persisted until the
+  // user explicitly saves.
+  const closeOnboarding = () => setOnboardSeed(null);
+
+  const goHome = () => {
+    setShowDashboard(false);
+    closeOnboarding();
+  };
+
+  // Let the browser Back button close onboarding instead of leaving the page.
+  // We push a dedicated history entry when onboarding opens; pressing Back pops
+  // it and triggers popstate, which we use to close the overlay.
+  const onboardingOpen = onboardSeed !== null;
+  useEffect(() => {
+    if (!onboardingOpen) return;
+    window.history.pushState({ onboarding: true }, "");
+    const onPop = () => setOnboardSeed(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [onboardingOpen]);
+
   return (
     <AuthProvider>
       <div className="relative min-h-screen overflow-hidden bg-white">
@@ -21,7 +43,7 @@ export default function App() {
         <Navbar
           onAuth={setAuthMode}
           onDashboard={() => setShowDashboard(true)}
-          onHome={() => setShowDashboard(false)}
+          onHome={goHome}
           inDashboard={showDashboard}
         />
 
@@ -37,7 +59,7 @@ export default function App() {
         {onboardSeed !== null && (
           <Onboarding
             seed={onboardSeed}
-            onClose={() => setOnboardSeed(null)}
+            onClose={closeOnboarding}
             onComplete={() => {
               setOnboardSeed(null);
               setShowDashboard(true);
