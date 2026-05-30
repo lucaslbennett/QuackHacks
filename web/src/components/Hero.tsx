@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { useTypewriter } from "../hooks/useTypewriter";
 
 const TYPEWRITER_TEXT =
-  "Glad you stopped in. Good taste tends to find us. Now, what are we building?";
+  "I'm your always-on AI influencer. I create and post videos 24/7, grow your audience, and send you status reports while you sleep. Ready to put your brand on autopilot?";
 
 const PILL_BUTTONS = [
-  "Pitch us an idea",
-  "Come work here",
-  "Send a brief hello",
-  "See how we operate",
+  "Launch my AI influencer",
+  "See how it works",
+  "Watch a sample video",
+  "View revenue reports",
 ] as const;
 
 const EMAIL = "hello@fasto.co";
