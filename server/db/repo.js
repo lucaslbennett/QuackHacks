@@ -1,5 +1,48 @@
 import { query, one, many } from "./pool.js";
 
+export const users = {
+  create: ({ email, passwordHash, name, role = "user" }) =>
+    one(
+      `INSERT INTO users (email, password_hash, name, role)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [email, passwordHash, name || null, role]
+    ),
+  getById: (id) => one(`SELECT * FROM users WHERE id=$1`, [id]),
+  getByEmail: (email) =>
+    one(`SELECT * FROM users WHERE lower(email)=lower($1)`, [email]),
+  list: () =>
+    many(`SELECT * FROM users ORDER BY created_at DESC LIMIT 200`),
+  update: (id, fields) => {
+    const keys = Object.keys(fields);
+    if (!keys.length) return users.getById(id);
+    const sets = keys.map((k, i) => `${k}=$${i + 2}`);
+    return one(
+      `UPDATE users SET ${sets.join(", ")}, updated_at=now() WHERE id=$1 RETURNING *`,
+      [id, ...keys.map((k) => fields[k])]
+    );
+  },
+  remove: (id) => query(`DELETE FROM users WHERE id=$1`, [id]),
+};
+
+export const sessions = {
+  create: ({ userId, tokenHash, expiresAt }) =>
+    one(
+      `INSERT INTO sessions (user_id, token_hash, expires_at)
+       VALUES ($1,$2,$3) RETURNING *`,
+      [userId, tokenHash, expiresAt]
+    ),
+  getValidByTokenHash: (tokenHash) =>
+    one(
+      `SELECT * FROM sessions WHERE token_hash=$1 AND expires_at > now()`,
+      [tokenHash]
+    ),
+  deleteByTokenHash: (tokenHash) =>
+    query(`DELETE FROM sessions WHERE token_hash=$1`, [tokenHash]),
+  deleteForUser: (userId) =>
+    query(`DELETE FROM sessions WHERE user_id=$1`, [userId]),
+  purgeExpired: () => query(`DELETE FROM sessions WHERE expires_at <= now()`),
+};
+
 export const influencers = {
   create: ({ name, niche, questionnaire, postsPerDay }) =>
     one(

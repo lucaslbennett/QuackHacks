@@ -16,6 +16,11 @@ export const config = {
   // Encryption key for IG credentials at rest (32 bytes hex/base64/utf8 ok).
   encryptionKey: process.env.ENCRYPTION_KEY || "",
 
+  auth: {
+    // How long an issued login session stays valid.
+    sessionTtlDays: parseInt(process.env.SESSION_TTL_DAYS || "30", 10),
+  },
+
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY || "",
     model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest",
