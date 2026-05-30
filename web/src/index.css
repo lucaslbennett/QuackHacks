@@ -1,29 +1,69 @@
 @import "tailwindcss";
 
-@theme {
-  --color-ink: #0a0a0f;
-  --color-panel: #14141f;
-  --color-panel2: #1c1c2b;
-  --color-line: #2a2a3d;
-  --color-brand: #a78bfa;
-  --color-brand2: #f472b6;
+/* Instrument Serif — SIL OFL 1.1, see /fonts/OFL.txt */
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/InstrumentSerif-Regular.ttf") format("truetype");
 }
 
-html,
-body,
-#root {
-  height: 100%;
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/InstrumentSerif-Italic.ttf") format("truetype");
+}
+
+:root {
+  --font-heading: "Instrument Serif", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "HelveticaNowDisplayW01-Rg", "Helvetica Neue", Arial,
+    sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  margin: 0;
-  background: radial-gradient(1200px 600px at 80% -10%, #2a1a4a55, transparent),
-    radial-gradient(1000px 500px at -10% 10%, #4a1a3a55, transparent), #0a0a0f;
-  color: #e7e7ee;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body);
+  background-color: #fff;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #3a3a52 transparent;
+::selection {
+  background: #fff;
+  color: #000;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.7s ease-out both;
 }
