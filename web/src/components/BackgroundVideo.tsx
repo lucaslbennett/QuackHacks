@@ -40,6 +40,7 @@ export default function BackgroundVideo() {
         Math.min(targetTimeRef.current, video.duration),
       );
 
+      // Queue the next seek if the target moved while we were seeking.
       if (Math.abs(video.currentTime - clamped) >= 0.01) {
         applySeek();
       }

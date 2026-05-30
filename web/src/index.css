@@ -18,25 +18,20 @@
 }
 
 :root {
+  /* Headings use Instrument Serif; body uses HelveticaNowDisplay (loaded in index.html) */
   --font-heading: "Instrument Serif", "Helvetica Neue", Arial, sans-serif;
-  --font-body: "HelveticaNowDisplayW01-Rg", "Helvetica Neue", Arial,
-    sans-serif;
+  --font-body: "HelveticaNowDisplayW01-Rg", "Helvetica Neue", Arial, sans-serif;
 }
 
-html {
-  scroll-behavior: smooth;
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
+  margin: 0;
   font-family: var(--font-body);
-  background-color: #fff;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-
-::selection {
-  background: #fff;
-  color: #000;
 }
 
 @keyframes blink {
@@ -51,19 +46,4 @@ body {
 
 .animate-blink {
   animation: blink 1s step-end infinite;
-}
-
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-up {
-  animation: fade-up 0.7s ease-out both;
 }
