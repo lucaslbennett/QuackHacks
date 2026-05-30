@@ -51,6 +51,32 @@ export function login(email: string, password: string) {
   return authRequest("/login", { email, password });
 }
 
+// Fixed credentials used by the localhost-only dev sign-in shortcut.
+const DEV_CREDENTIALS = {
+  email: "dev@local.test",
+  password: "devpassword123",
+  name: "Dev User",
+};
+
+// True only when the app is served from a local development host.
+export function isLocalhost(): boolean {
+  if (typeof window === "undefined") return false;
+  return /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/.test(
+    window.location.hostname,
+  );
+}
+
+// One-click dev login: log in with the shared dev account, creating it on the
+// first run if it doesn't exist yet.
+export async function devLogin(): Promise<{ token: string; user: User }> {
+  const { email, password, name } = DEV_CREDENTIALS;
+  try {
+    return await login(email, password);
+  } catch {
+    return await register(email, password, name);
+  }
+}
+
 export async function logout(): Promise<void> {
   const token = getToken();
   setToken(null);

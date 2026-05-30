@@ -8,9 +8,17 @@ export function isConfigured() {
   return Boolean(config.browserbase.apiKey && config.browserbase.projectId);
 }
 
+// Builds the Browserbase dashboard URL for a session so it can be watched live.
+export function sessionUrlFor(sessionId) {
+  if (!sessionId) return null;
+  return `https://www.browserbase.com/sessions/${sessionId}`;
+}
+
 // Creates an initialized Stagehand instance backed by Browserbase, using
 // Gemini as the reasoning model for act()/extract(). Caller must close().
-export async function createStagehand({ sessionData } = {}) {
+// `onSession` (if provided) is invoked once the session is live with
+// { sessionId, sessionUrl } so callers can surface a watchable link early.
+export async function createStagehand({ sessionData, onSession } = {}) {
   if (!isConfigured()) {
     throw new Error("BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required");
   }
@@ -35,7 +43,15 @@ export async function createStagehand({ sessionData } = {}) {
     },
   });
   await stagehand.init();
-  log.info("Stagehand session initialized");
+  const sessionId = stagehand.browserbaseSessionID;
+  log.info("Stagehand session initialized", sessionId || "");
+  if (typeof onSession === "function") {
+    try {
+      onSession({ sessionId, sessionUrl: sessionUrlFor(sessionId) });
+    } catch (err) {
+      log.warn("onSession callback error", err?.message);
+    }
+  }
   return stagehand;
 }
 

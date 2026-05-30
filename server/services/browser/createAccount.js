@@ -20,7 +20,7 @@ function randomPassword() {
 
 // Auto-creates a fresh Instagram account via the signup flow, clearing email
 // and SMS verification through the pluggable verification service.
-export async function createInstagramAccount({ influencerId, persona, email, phone }) {
+export async function createInstagramAccount({ influencerId, persona, email, phone, onSession }) {
   const fullName = persona?.displayName || "Creator";
   const username = buildUsername(persona?.handleSuggestions?.[0] || persona?.displayName);
   const password = randomPassword();
@@ -98,7 +98,7 @@ export async function createInstagramAccount({ influencerId, persona, email, pho
       .catch(() => ({ loggedIn: false }));
 
     return { loggedIn: Boolean(status?.loggedIn), note: status?.note };
-  });
+  }, { onSession });
 
   // Posting re-authenticates with the stored credentials, so we don't need to
   // persist a Browserbase context here (avoids feeding a bad context id back in).

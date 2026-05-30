@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useAuth } from "../lib/authContext";
+import { isLocalhost } from "../lib/auth";
 import type { AuthMode } from "./AuthModal";
 
 const NAV_LINKS = ["Home", "Demo", "Dashboard"] as const;
+
+const SHOW_DEV_LOGIN = isLocalhost();
 
 export default function Navbar({
   onAuth,
@@ -10,7 +13,13 @@ export default function Navbar({
   onAuth: (mode: AuthMode) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, devLogin, logout } = useAuth();
+
+  const handleDevLogin = () => {
+    devLogin().catch(() => {
+      /* surfaced via console; dev-only shortcut */
+    });
+  };
 
   return (
     <>
@@ -55,6 +64,16 @@ export default function Navbar({
             </>
           ) : (
             <>
+              {SHOW_DEV_LOGIN && (
+                <button
+                  type="button"
+                  onClick={handleDevLogin}
+                  title="Sign in with the local dev account"
+                  className="rounded-full border border-dashed border-amber-500 px-4 py-1.5 text-[13px] text-amber-600 transition-colors duration-200 hover:bg-amber-500 hover:text-white"
+                >
+                  Dev Sign In
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => onAuth("login")}
@@ -135,6 +154,18 @@ export default function Navbar({
           </>
         ) : (
           <>
+            {SHOW_DEV_LOGIN && (
+              <button
+                type="button"
+                className="text-left text-[32px] font-medium text-amber-400 transition-opacity hover:opacity-60"
+                onClick={() => {
+                  setMenuOpen(false);
+                  handleDevLogin();
+                }}
+              >
+                Dev Sign In
+              </button>
+            )}
             <button
               type="button"
               className="text-left text-[32px] font-medium text-white transition-opacity hover:opacity-60"

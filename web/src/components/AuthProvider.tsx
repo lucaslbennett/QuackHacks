@@ -31,13 +31,20 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
     setUser(user);
   };
 
+  const devLogin = async () => {
+    const { user } = await authApi.devLogin();
+    setUser(user);
+  };
+
   const logout = async () => {
     await authApi.logout();
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, devLogin, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

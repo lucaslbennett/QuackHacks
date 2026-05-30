@@ -3,6 +3,7 @@ import AuthProvider from "./components/AuthProvider";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
+import TestPanel from "./components/TestPanel";
 
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
@@ -12,6 +13,7 @@ export default function App() {
       <div className="relative min-h-screen overflow-hidden bg-white">
         <Navbar onAuth={setAuthMode} />
         <Hero />
+        <TestPanel />
         {authMode && (
           <AuthModal
             mode={authMode}
