@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const NAV_LINKS = ["Labs", "Studio", "Openings", "Shop"] as const;
+const NAV_LINKS = ["Home", "Demo", "Dashboard"] as const;
 
 export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -19,14 +19,15 @@ export default function Navbar() {
         </div>
 
         {/* Desktop nav links */}
-        <nav className="hidden items-center text-[23px] text-white md:flex">
-          {NAV_LINKS.map((link, i) => (
-            <span key={link} className="inline-flex items-center">
-              {i > 0 && <span className="mx-1">, </span>}
-              <a href="#" className="transition-opacity hover:opacity-60">
-                {link}
-              </a>
-            </span>
+        <nav className="hidden items-center gap-1 rounded-full border border-white/30 px-1.5 py-1 text-[13px] text-white md:flex">
+          {NAV_LINKS.map((link) => (
+            <a
+              key={link}
+              href="#"
+              className="rounded-full px-3 py-0.5 transition-colors duration-200 hover:bg-white hover:text-black"
+            >
+              {link}
+            </a>
           ))}
         </nav>
 
