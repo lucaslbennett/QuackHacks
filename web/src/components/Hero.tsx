@@ -48,11 +48,17 @@ function CopyIcon() {
 export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
   const { displayed, done } = useTypewriter({ text: TYPEWRITER_TEXT });
   const [pillsVisible, setPillsVisible] = useState(false);
+  const [chatValue, setChatValue] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => setPillsVisible(true), 400);
     return () => clearTimeout(timer);
   }, []);
+
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onGetStarted();
+  };
 
   const handleCopyEmail = async () => {
     try {
@@ -81,14 +87,37 @@ export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
           )}
         </p>
 
-        {/* Primary CTA */}
-        <button
-          type="button"
-          onClick={onGetStarted}
-          className="mb-6 inline-flex items-center justify-center rounded-full bg-black px-28 py-3 text-[15px] font-medium text-white transition-transform duration-200 hover:scale-[1.03] hover:opacity-90 sm:text-[17px]"
+        {/* ChatGPT-style composer */}
+        <form
+          onSubmit={handleChatSubmit}
+          className="mb-6 flex items-center gap-2 rounded-[28px] border border-black/10 bg-white px-2.5 py-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-shadow focus-within:shadow-[0_2px_18px_rgba(0,0,0,0.10)]"
         >
-          Get Started
-        </button>
+          <input
+            type="text"
+            value={chatValue}
+            onChange={(e) => setChatValue(e.target.value)}
+            placeholder="Describe your influencer"
+            className="min-w-0 flex-1 bg-transparent px-3 text-[15px] text-black placeholder-black/40 outline-none sm:text-[16px]"
+          />
+
+          {/* Send button */}
+          <button
+            type="submit"
+            aria-label="Send"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition-opacity hover:opacity-80 disabled:opacity-30"
+            disabled={false}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M12 19V5M12 5l-6 6M12 5l6 6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </form>
 
         {/* Action pill buttons */}
         <div
