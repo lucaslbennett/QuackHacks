@@ -1,6 +1,5 @@
 import { useState } from "react";
 import AuthProvider from "./components/AuthProvider";
-import AnimatedBackground from "./components/AnimatedBackground";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
@@ -28,7 +27,6 @@ export default function App() {
           <Dashboard />
         ) : (
           <>
-            <AnimatedBackground />
             <Hero onGenerate={setGeneratePrompt} />
             <TestPanel />
           </>

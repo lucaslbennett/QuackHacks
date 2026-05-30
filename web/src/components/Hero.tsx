@@ -76,6 +76,18 @@ export default function Hero({
 
   return (
     <section className="relative z-[1] flex h-screen flex-col justify-end overflow-hidden px-5 pb-12 sm:px-8 md:justify-center md:px-10 md:pb-0">
+      <video
+        aria-hidden
+        autoPlay
+        className="absolute inset-0 h-full w-full object-cover"
+        loop
+        muted
+        playsInline
+        preload="auto"
+      >
+        <source src="/videos/hero-background.mp4" type="video/mp4" />
+      </video>
+
       <div className="relative z-10 max-w-xl">
         {/* Typewriter text */}
         <p
