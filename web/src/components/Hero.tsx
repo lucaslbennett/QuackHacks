@@ -78,7 +78,7 @@ export default function Hero() {
         >
           Hey there, meet A.R.I.A,
           <br />
-          Mainframe&apos;s Adaptive Response Interface Agent
+          Fasto&apos;s Adaptive Response Interface Agent
         </p>
 
         {/* Typewriter text */}
