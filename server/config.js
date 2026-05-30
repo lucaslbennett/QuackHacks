@@ -7,11 +7,26 @@ const bool = (v, fallback = false) => {
   return ["1", "true", "yes", "on"].includes(String(v).toLowerCase());
 };
 
+// Picks the right Postgres URL for the current runtime.
+// - On Railway, the internal host (postgres.railway.internal) is fastest and
+//   has no egress cost, so prefer DATABASE_URL there.
+// - Locally, the internal host is unreachable, so fall back to the public
+//   proxy URL (DATABASE_PUBLIC_URL) automatically.
+function resolveDatabaseUrl() {
+  const internal = (process.env.DATABASE_URL || "").trim();
+  const publicUrl = (process.env.DATABASE_PUBLIC_URL || "").trim();
+  const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  const internalIsUnreachableLocally = /\.railway\.internal[:/]/.test(internal);
+
+  if (!onRailway && internalIsUnreachableLocally && publicUrl) return publicUrl;
+  return internal || publicUrl;
+}
+
 export const config = {
   env: process.env.NODE_ENV || "development",
   port: parseInt(process.env.PORT || "3000", 10),
 
-  databaseUrl: process.env.DATABASE_URL || "",
+  databaseUrl: resolveDatabaseUrl(),
 
   // Encryption key for IG credentials at rest (32 bytes hex/base64/utf8 ok).
   encryptionKey: process.env.ENCRYPTION_KEY || "",
