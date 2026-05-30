@@ -1,5 +1,6 @@
 import { useState } from "react";
 import AuthProvider from "./components/AuthProvider";
+import AnimatedBackground from "./components/AnimatedBackground";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
@@ -11,6 +12,7 @@ export default function App() {
   return (
     <AuthProvider>
       <div className="relative min-h-screen overflow-hidden bg-white">
+        <AnimatedBackground />
         <Navbar onAuth={setAuthMode} />
         <Hero />
         <TestPanel />

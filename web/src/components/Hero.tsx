@@ -65,22 +65,6 @@ export default function Hero() {
   return (
     <section className="relative z-[1] flex h-screen flex-col justify-end overflow-hidden px-5 pb-12 sm:px-8 md:justify-center md:px-10 md:pb-0">
       <div className="relative z-10 max-w-xl">
-        {/* Blurred intro label */}
-        <p
-          className="pointer-events-none mb-5 select-none sm:mb-6"
-          style={{
-            fontSize: "clamp(18px, 4vw, 26px)",
-            lineHeight: 1.3,
-            fontWeight: 400,
-            color: "#000",
-            filter: "blur(4px)",
-          }}
-        >
-          Hey there, meet A.R.I.A,
-          <br />
-          Fasto&apos;s Adaptive Response Interface Agent
-        </p>
-
         {/* Typewriter text */}
         <p
           className="mb-5 min-h-[54px] text-black sm:mb-6"
