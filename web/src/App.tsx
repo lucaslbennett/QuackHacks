@@ -14,7 +14,7 @@ export default function App() {
       <div className="relative min-h-screen overflow-hidden bg-white">
         <AnimatedBackground />
         <Navbar onAuth={setAuthMode} />
-        <Hero />
+        <Hero onGetStarted={() => setAuthMode("signup")} />
         <TestPanel />
         {authMode && (
           <AuthModal

@@ -45,7 +45,7 @@ function CopyIcon() {
   );
 }
 
-export default function Hero() {
+export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
   const { displayed, done } = useTypewriter({ text: TYPEWRITER_TEXT });
   const [pillsVisible, setPillsVisible] = useState(false);
 
@@ -69,8 +69,9 @@ export default function Hero() {
         <p
           className="mb-5 min-h-[54px] text-black sm:mb-6"
           style={{
-            fontSize: "clamp(18px, 4vw, 26px)",
-            lineHeight: 1.35,
+            fontFamily: "var(--font-heading)",
+            fontSize: "clamp(24px, 5vw, 38px)",
+            lineHeight: 1.25,
             fontWeight: 400,
           }}
         >
@@ -79,6 +80,15 @@ export default function Hero() {
             <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-black" />
           )}
         </p>
+
+        {/* Primary CTA */}
+        <button
+          type="button"
+          onClick={onGetStarted}
+          className="mb-6 inline-flex items-center justify-center rounded-full bg-black px-20 py-3 text-[15px] font-medium text-white transition-transform duration-200 hover:scale-[1.03] hover:opacity-90 sm:text-[17px]"
+        >
+          Get Started
+        </button>
 
         {/* Action pill buttons */}
         <div
