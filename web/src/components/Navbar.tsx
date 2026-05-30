@@ -18,7 +18,7 @@ export default function Navbar({
         {/* Logo */}
         <div className="flex items-center gap-3">
           <span
-            className="text-[21px] tracking-tight text-white sm:text-[26px]"
+            className="text-[21px] tracking-tight text-black sm:text-[26px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
             Fasto
@@ -26,12 +26,12 @@ export default function Navbar({
         </div>
 
         {/* Desktop nav links */}
-        <nav className="hidden items-center gap-1 rounded-full border border-white/30 px-1.5 py-1 text-[13px] text-white md:flex">
+        <nav className="hidden items-center gap-1 rounded-full border border-black/30 px-1.5 py-1 text-[13px] text-black md:flex">
           {NAV_LINKS.map((link) => (
             <a
               key={link}
               href="#"
-              className="rounded-full px-3 py-0.5 transition-colors duration-200 hover:bg-white hover:text-black"
+              className="rounded-full px-3 py-0.5 transition-colors duration-200 hover:bg-black hover:text-white"
             >
               {link}
             </a>
@@ -42,13 +42,13 @@ export default function Navbar({
         <div className="hidden items-center gap-2 md:flex">
           {user ? (
             <>
-              <span className="text-[13px] text-white/70">
+              <span className="text-[13px] text-black/70">
                 {user.name || user.email}
               </span>
               <button
                 type="button"
                 onClick={() => logout()}
-                className="rounded-full border border-white/30 px-4 py-1.5 text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black"
+                className="rounded-full border border-black/30 px-4 py-1.5 text-[13px] text-black transition-colors duration-200 hover:bg-black hover:text-white"
               >
                 Log Out
               </button>
@@ -58,14 +58,14 @@ export default function Navbar({
               <button
                 type="button"
                 onClick={() => onAuth("login")}
-                className="rounded-full border border-white/30 px-4 py-1.5 text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black"
+                className="rounded-full border border-black/30 px-4 py-1.5 text-[13px] text-black transition-colors duration-200 hover:bg-black hover:text-white"
               >
                 Log In
               </button>
               <button
                 type="button"
                 onClick={() => onAuth("signup")}
-                className="rounded-full bg-white px-4 py-1.5 text-[13px] font-medium text-black transition-opacity duration-200 hover:opacity-80"
+                className="rounded-full bg-black px-4 py-1.5 text-[13px] font-medium text-white transition-opacity duration-200 hover:opacity-80"
               >
                 Sign Up
               </button>
@@ -82,17 +82,17 @@ export default function Navbar({
           onClick={() => setMenuOpen((open) => !open)}
         >
           <span
-            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
               menuOpen ? "translate-y-[7px] rotate-45" : ""
             }`}
           />
           <span
-            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
               menuOpen ? "opacity-0" : ""
             }`}
           />
           <span
-            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
               menuOpen ? "-translate-y-[7px] -rotate-45" : ""
             }`}
           />
@@ -101,7 +101,7 @@ export default function Navbar({
 
       {/* Mobile overlay */}
       <div
-        className={`fixed inset-0 z-[9] flex flex-col justify-center gap-8 bg-white/95 px-8 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
+        className={`fixed inset-0 z-[9] flex flex-col justify-center gap-8 bg-black/95 px-8 backdrop-blur-sm transition-opacity duration-300 md:hidden ${
           menuOpen
             ? "pointer-events-auto opacity-100"
             : "pointer-events-none opacity-0"
@@ -111,7 +111,7 @@ export default function Navbar({
           <a
             key={link}
             href="#"
-            className="text-[32px] font-medium text-black transition-opacity hover:opacity-60"
+            className="text-[32px] font-medium text-white transition-opacity hover:opacity-60"
             onClick={() => setMenuOpen(false)}
           >
             {link}
@@ -119,12 +119,12 @@ export default function Navbar({
         ))}
         {user ? (
           <>
-            <span className="text-[20px] text-black/60">
+            <span className="text-[20px] text-white/60">
               {user.name || user.email}
             </span>
             <button
               type="button"
-              className="text-left text-[32px] font-medium text-black transition-opacity hover:opacity-60"
+              className="text-left text-[32px] font-medium text-white transition-opacity hover:opacity-60"
               onClick={() => {
                 setMenuOpen(false);
                 logout();
@@ -137,7 +137,7 @@ export default function Navbar({
           <>
             <button
               type="button"
-              className="text-left text-[32px] font-medium text-black transition-opacity hover:opacity-60"
+              className="text-left text-[32px] font-medium text-white transition-opacity hover:opacity-60"
               onClick={() => {
                 setMenuOpen(false);
                 onAuth("login");
@@ -147,7 +147,7 @@ export default function Navbar({
             </button>
             <button
               type="button"
-              className="text-left text-[32px] font-medium text-black underline underline-offset-2 transition-opacity hover:opacity-60"
+              className="text-left text-[32px] font-medium text-white underline underline-offset-2 transition-opacity hover:opacity-60"
               onClick={() => {
                 setMenuOpen(false);
                 onAuth("signup");

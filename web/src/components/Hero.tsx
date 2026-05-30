@@ -72,7 +72,7 @@ export default function Hero() {
             fontSize: "clamp(18px, 4vw, 26px)",
             lineHeight: 1.3,
             fontWeight: 400,
-            color: "#fff",
+            color: "#000",
             filter: "blur(4px)",
           }}
         >
@@ -83,7 +83,7 @@ export default function Hero() {
 
         {/* Typewriter text */}
         <p
-          className="mb-5 min-h-[54px] text-white sm:mb-6"
+          className="mb-5 min-h-[54px] text-black sm:mb-6"
           style={{
             fontSize: "clamp(18px, 4vw, 26px)",
             lineHeight: 1.35,
@@ -92,7 +92,7 @@ export default function Hero() {
         >
           {displayed}
           {!done && (
-            <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-white" />
+            <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-black" />
           )}
         </p>
 
@@ -109,7 +109,7 @@ export default function Hero() {
             <button
               key={label}
               type="button"
-              className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-black/10 bg-white px-4 py-[0.3em] text-[13px] text-black transition-colors duration-200 hover:bg-black hover:text-white sm:px-5 sm:text-[15px]"
+              className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-black px-4 py-[0.3em] text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black sm:px-5 sm:text-[15px]"
             >
               {label}
             </button>
@@ -118,7 +118,7 @@ export default function Hero() {
           <button
             type="button"
             onClick={handleCopyEmail}
-            className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border border-white bg-transparent px-4 py-[0.3em] text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black sm:gap-3 sm:px-5 sm:text-[15px]"
+            className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border border-black bg-transparent px-4 py-[0.3em] text-[13px] text-black transition-colors duration-200 hover:bg-black hover:text-white sm:gap-3 sm:px-5 sm:text-[15px]"
           >
             <span>
               Reach us:{" "}

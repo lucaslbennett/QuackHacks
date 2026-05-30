@@ -52,11 +52,11 @@ export default function AuthModal({
 
   return (
     <div
-      className="fixed inset-0 z-[50] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[50] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#0d0d0d] p-7 text-white shadow-2xl"
+        className="w-full max-w-sm rounded-2xl border border-black/10 bg-white p-7 text-black shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h2
@@ -65,7 +65,7 @@ export default function AuthModal({
         >
           {isSignup ? "Create your account" : "Welcome back"}
         </h2>
-        <p className="mb-6 text-[13px] text-white/50">
+        <p className="mb-6 text-[13px] text-black/50">
           {isSignup
             ? "Sign up to get started with Fasto."
             : "Log in to your Fasto account."}
@@ -79,7 +79,7 @@ export default function AuthModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoComplete="name"
-              className="rounded-lg border border-white/15 bg-white/5 px-4 py-2.5 text-[14px] text-white placeholder-white/40 outline-none transition-colors focus:border-white/40"
+              className="rounded-lg border border-black/15 bg-black/5 px-4 py-2.5 text-[14px] text-black placeholder-black/40 outline-none transition-colors focus:border-black/40"
             />
           )}
           <input
@@ -89,7 +89,7 @@ export default function AuthModal({
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            className="rounded-lg border border-white/15 bg-white/5 px-4 py-2.5 text-[14px] text-white placeholder-white/40 outline-none transition-colors focus:border-white/40"
+            className="rounded-lg border border-black/15 bg-black/5 px-4 py-2.5 text-[14px] text-black placeholder-black/40 outline-none transition-colors focus:border-black/40"
           />
           <input
             type="password"
@@ -99,15 +99,15 @@ export default function AuthModal({
             required
             minLength={isSignup ? 8 : undefined}
             autoComplete={isSignup ? "new-password" : "current-password"}
-            className="rounded-lg border border-white/15 bg-white/5 px-4 py-2.5 text-[14px] text-white placeholder-white/40 outline-none transition-colors focus:border-white/40"
+            className="rounded-lg border border-black/15 bg-black/5 px-4 py-2.5 text-[14px] text-black placeholder-black/40 outline-none transition-colors focus:border-black/40"
           />
 
-          {error && <p className="text-[13px] text-red-400">{error}</p>}
+          {error && <p className="text-[13px] text-red-600">{error}</p>}
 
           <button
             type="submit"
             disabled={submitting}
-            className="mt-1 rounded-full bg-white px-4 py-2.5 text-[14px] font-medium text-black transition-opacity hover:opacity-80 disabled:opacity-50"
+            className="mt-1 rounded-full bg-black px-4 py-2.5 text-[14px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-50"
           >
             {submitting
               ? "Please wait…"
@@ -117,7 +117,7 @@ export default function AuthModal({
           </button>
         </form>
 
-        <p className="mt-5 text-center text-[13px] text-white/50">
+        <p className="mt-5 text-center text-[13px] text-black/50">
           {isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
           <button
             type="button"
@@ -125,7 +125,7 @@ export default function AuthModal({
               setError(null);
               onSwitchMode(isSignup ? "login" : "signup");
             }}
-            className="text-white underline underline-offset-2 hover:opacity-70"
+            className="text-black underline underline-offset-2 hover:opacity-70"
           >
             {isSignup ? "Log in" : "Sign up"}
           </button>

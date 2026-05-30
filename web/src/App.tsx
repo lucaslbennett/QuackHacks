@@ -9,7 +9,7 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <div className="relative min-h-screen overflow-hidden bg-black">
+      <div className="relative min-h-screen overflow-hidden bg-white">
         <Navbar onAuth={setAuthMode} />
         <Hero />
         {authMode && (
