@@ -10,9 +10,13 @@ const SHOW_DEV_LOGIN = isLocalhost();
 export default function Navbar({
   onAuth,
   onDashboard,
+  onHome,
+  inDashboard = false,
 }: {
   onAuth: (mode: AuthMode) => void;
   onDashboard: () => void;
+  onHome?: () => void;
+  inDashboard?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, devLogin, logout } = useAuth();
@@ -25,6 +29,7 @@ export default function Navbar({
 
   const handleNavClick = (link: string) => {
     if (link === "Dashboard") onDashboard();
+    else if (onHome) onHome();
   };
 
   return (
@@ -47,7 +52,11 @@ export default function Navbar({
               key={link}
               type="button"
               onClick={() => handleNavClick(link)}
-              className="rounded-full px-3 py-0.5 transition-colors duration-200 hover:bg-black hover:text-white"
+              className={`rounded-full px-3 py-0.5 transition-colors duration-200 ${
+                inDashboard && link === "Dashboard"
+                  ? "bg-black text-white"
+                  : "hover:bg-black hover:text-white"
+              }`}
             >
               {link}
             </button>

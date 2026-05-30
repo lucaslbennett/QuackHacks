@@ -14,13 +14,24 @@ export default function App() {
   return (
     <AuthProvider>
       <div className="relative min-h-screen overflow-hidden bg-white">
-        <AnimatedBackground />
+        {/* Single, always-mounted header so it never shifts between tabs. */}
         <Navbar
           onAuth={setAuthMode}
           onDashboard={() => setShowDashboard(true)}
+          onHome={() => setShowDashboard(false)}
+          inDashboard={showDashboard}
         />
-        <Hero onGetStarted={() => setAuthMode("signup")} />
-        <TestPanel />
+
+        {showDashboard ? (
+          <Dashboard />
+        ) : (
+          <>
+            <AnimatedBackground />
+            <Hero onGetStarted={() => setAuthMode("signup")} />
+            <TestPanel />
+          </>
+        )}
+
         {authMode && (
           <AuthModal
             mode={authMode}
@@ -31,9 +42,6 @@ export default function App() {
               setShowDashboard(true);
             }}
           />
-        )}
-        {showDashboard && (
-          <Dashboard onClose={() => setShowDashboard(false)} />
         )}
       </div>
     </AuthProvider>

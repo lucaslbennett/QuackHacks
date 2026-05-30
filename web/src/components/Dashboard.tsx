@@ -1,11 +1,5 @@
 import { useAuth } from "../lib/authContext";
 
-interface DashboardProps {
-  onClose: () => void;
-}
-
-const NAV_LINKS = ["Home", "Demo", "Dashboard"] as const;
-
 const STATS = [
   { label: "Videos posted", value: "1,284", delta: "+42 this week" },
   { label: "Total views", value: "3.9M", delta: "+312K this week" },
@@ -60,59 +54,13 @@ function Sparkline() {
   );
 }
 
-export default function Dashboard({ onClose }: DashboardProps) {
-  const { user, logout } = useAuth();
+export default function Dashboard() {
+  const { user } = useAuth();
   const name = user?.name || user?.email?.split("@")[0] || "there";
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto bg-white text-black">
-      {/* Top bar — mirrors the site navbar so it stays consistent */}
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-black/10 bg-white/80 px-5 py-4 backdrop-blur sm:px-8 sm:py-5">
-        <span
-          className="text-[20px] tracking-tight sm:text-[24px]"
-          style={{ fontFamily: "var(--font-heading)" }}
-        >
-          Fasto
-        </span>
-
-        {/* Nav links (same pill as the landing navbar) */}
-        <nav className="hidden items-center gap-1 rounded-full border border-black/30 px-1.5 py-1 text-[13px] text-black md:flex">
-          {NAV_LINKS.map((link) => (
-            <button
-              key={link}
-              type="button"
-              onClick={() => {
-                if (link !== "Dashboard") onClose();
-              }}
-              className={`rounded-full px-3 py-0.5 transition-colors duration-200 ${
-                link === "Dashboard"
-                  ? "bg-black text-white"
-                  : "hover:bg-black hover:text-white"
-              }`}
-            >
-              {link}
-            </button>
-          ))}
-        </nav>
-
-        <div className="flex items-center gap-2">
-          <span className="hidden text-[13px] text-black/70 md:inline">
-            {user?.name || user?.email}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              logout();
-              onClose();
-            }}
-            className="rounded-full border border-black/30 px-4 py-1.5 text-[13px] text-black transition-colors duration-200 hover:bg-black hover:text-white"
-          >
-            Log Out
-          </button>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl px-5 py-12 sm:px-10 sm:py-16">
+    <div className="min-h-screen bg-white text-black">
+      <main className="mx-auto max-w-6xl px-5 pb-16 pt-28 sm:px-10 sm:pt-32">
         {/* Welcome */}
         <h1
           className="mb-2 text-[40px] leading-tight sm:text-[64px]"
