@@ -85,7 +85,7 @@ export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
         <button
           type="button"
           onClick={onGetStarted}
-          className="mb-6 inline-flex items-center justify-center rounded-full bg-black px-20 py-3 text-[15px] font-medium text-white transition-transform duration-200 hover:scale-[1.03] hover:opacity-90 sm:text-[17px]"
+          className="mb-6 inline-flex items-center justify-center rounded-full bg-black px-28 py-3 text-[15px] font-medium text-white transition-transform duration-200 hover:scale-[1.03] hover:opacity-90 sm:text-[17px]"
         >
           Get Started
         </button>
