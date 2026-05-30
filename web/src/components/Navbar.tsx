@@ -1,9 +1,16 @@
 import { useState } from "react";
+import { useAuth } from "../lib/authContext";
+import type { AuthMode } from "./AuthModal";
 
 const NAV_LINKS = ["Home", "Demo", "Dashboard"] as const;
 
-export default function Navbar() {
+export default function Navbar({
+  onAuth,
+}: {
+  onAuth: (mode: AuthMode) => void;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { user, logout } = useAuth();
 
   return (
     <>
@@ -31,13 +38,40 @@ export default function Navbar() {
           ))}
         </nav>
 
-        {/* Desktop CTA */}
-        <a
-          href="#"
-          className="hidden text-[23px] text-white underline underline-offset-2 transition-opacity hover:opacity-60 md:inline"
-        >
-          Get in touch
-        </a>
+        {/* Desktop auth actions */}
+        <div className="hidden items-center gap-2 md:flex">
+          {user ? (
+            <>
+              <span className="text-[13px] text-white/70">
+                {user.name || user.email}
+              </span>
+              <button
+                type="button"
+                onClick={() => logout()}
+                className="rounded-full border border-white/30 px-4 py-1.5 text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black"
+              >
+                Log Out
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => onAuth("login")}
+                className="rounded-full border border-white/30 px-4 py-1.5 text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black"
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => onAuth("signup")}
+                className="rounded-full bg-white px-4 py-1.5 text-[13px] font-medium text-black transition-opacity duration-200 hover:opacity-80"
+              >
+                Sign Up
+              </button>
+            </>
+          )}
+        </div>
 
         {/* Mobile hamburger */}
         <button
@@ -83,13 +117,46 @@ export default function Navbar() {
             {link}
           </a>
         ))}
-        <a
-          href="#"
-          className="text-[32px] font-medium text-black underline underline-offset-2 transition-opacity hover:opacity-60"
-          onClick={() => setMenuOpen(false)}
-        >
-          Get in touch
-        </a>
+        {user ? (
+          <>
+            <span className="text-[20px] text-black/60">
+              {user.name || user.email}
+            </span>
+            <button
+              type="button"
+              className="text-left text-[32px] font-medium text-black transition-opacity hover:opacity-60"
+              onClick={() => {
+                setMenuOpen(false);
+                logout();
+              }}
+            >
+              Log Out
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="text-left text-[32px] font-medium text-black transition-opacity hover:opacity-60"
+              onClick={() => {
+                setMenuOpen(false);
+                onAuth("login");
+              }}
+            >
+              Log In
+            </button>
+            <button
+              type="button"
+              className="text-left text-[32px] font-medium text-black underline underline-offset-2 transition-opacity hover:opacity-60"
+              onClick={() => {
+                setMenuOpen(false);
+                onAuth("signup");
+              }}
+            >
+              Sign Up
+            </button>
+          </>
+        )}
       </div>
     </>
   );
