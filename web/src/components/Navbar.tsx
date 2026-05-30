@@ -9,8 +9,10 @@ const SHOW_DEV_LOGIN = isLocalhost();
 
 export default function Navbar({
   onAuth,
+  onDashboard,
 }: {
   onAuth: (mode: AuthMode) => void;
+  onDashboard: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, devLogin, logout } = useAuth();
@@ -19,6 +21,10 @@ export default function Navbar({
     devLogin().catch(() => {
       /* surfaced via console; dev-only shortcut */
     });
+  };
+
+  const handleNavClick = (link: string) => {
+    if (link === "Dashboard") onDashboard();
   };
 
   return (
@@ -37,13 +43,14 @@ export default function Navbar({
         {/* Desktop nav links */}
         <nav className="hidden items-center gap-1 rounded-full border border-black/30 px-1.5 py-1 text-[13px] text-black md:flex">
           {NAV_LINKS.map((link) => (
-            <a
+            <button
               key={link}
-              href="#"
+              type="button"
+              onClick={() => handleNavClick(link)}
               className="rounded-full px-3 py-0.5 transition-colors duration-200 hover:bg-black hover:text-white"
             >
               {link}
-            </a>
+            </button>
           ))}
         </nav>
 
@@ -127,14 +134,17 @@ export default function Navbar({
         }`}
       >
         {NAV_LINKS.map((link) => (
-          <a
+          <button
             key={link}
-            href="#"
-            className="text-[32px] font-medium text-white transition-opacity hover:opacity-60"
-            onClick={() => setMenuOpen(false)}
+            type="button"
+            className="text-left text-[32px] font-medium text-white transition-opacity hover:opacity-60"
+            onClick={() => {
+              setMenuOpen(false);
+              handleNavClick(link);
+            }}
           >
             {link}
-          </a>
+          </button>
         ))}
         {user ? (
           <>

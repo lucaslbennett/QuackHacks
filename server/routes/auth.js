@@ -30,8 +30,11 @@ router.post(
   asyncH(async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
-    const name = req.body.name ? String(req.body.name).trim() : null;
+    const name = String(req.body.name || "").trim();
 
+    if (!name) {
+      return res.status(400).json({ ok: false, error: "name is required" });
+    }
     if (!EMAIL_RE.test(email)) {
       return res.status(400).json({ ok: false, error: "valid email is required" });
     }

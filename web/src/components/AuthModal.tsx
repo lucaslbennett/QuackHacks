@@ -7,12 +7,14 @@ interface AuthModalProps {
   mode: AuthMode;
   onClose: () => void;
   onSwitchMode: (mode: AuthMode) => void;
+  onSuccess: () => void;
 }
 
 export default function AuthModal({
   mode,
   onClose,
   onSwitchMode,
+  onSuccess,
 }: AuthModalProps) {
   const { login, register } = useAuth();
   const [name, setName] = useState("");
@@ -38,11 +40,11 @@ export default function AuthModal({
     setSubmitting(true);
     try {
       if (isSignup) {
-        await register(email, password, name || undefined);
+        await register(email, password, name.trim());
       } else {
         await login(email, password);
       }
-      onClose();
+      onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -75,9 +77,10 @@ export default function AuthModal({
           {isSignup && (
             <input
               type="text"
-              placeholder="Name (optional)"
+              placeholder="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              required
               autoComplete="name"
               className="rounded-lg border border-black/15 bg-black/5 px-4 py-2.5 text-[14px] text-black placeholder-black/40 outline-none transition-colors focus:border-black/40"
             />
