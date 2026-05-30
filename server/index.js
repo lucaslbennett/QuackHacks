@@ -13,6 +13,7 @@ import { startScheduler } from "./jobs/scheduler.js";
 import systemRoutes from "./routes/system.js";
 import influencerRoutes from "./routes/influencers.js";
 import authRoutes from "./routes/auth.js";
+import generateRoutes from "./routes/generate.js";
 
 const log = createLogger("server");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ app.use("/media", express.static(path.resolve(config.mediaDir)));
 // API.
 app.use("/api", systemRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/generate", generateRoutes);
 app.use("/api/influencers", influencerRoutes);
 
 // Serve the built dashboard if present; otherwise a minimal landing page.

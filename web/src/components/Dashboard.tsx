@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { useAuth } from "../lib/authContext";
+import { listSavedGenerations, type Generation } from "../lib/generate";
 
 const STATS = [
   { label: "Videos posted", value: "1,284", delta: "+42 this week" },
@@ -57,6 +59,17 @@ function Sparkline() {
 export default function Dashboard() {
   const { user } = useAuth();
   const name = user?.name || user?.email?.split("@")[0] || "there";
+  const [saved, setSaved] = useState<Generation[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    listSavedGenerations().then((gens) => {
+      if (active) setSaved(gens);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -89,6 +102,42 @@ export default function Dashboard() {
               <p className="mt-1 text-[12px] text-[#5b73d6]">{s.delta}</p>
             </div>
           ))}
+        </section>
+
+        {/* Saved influencers */}
+        <section className="mb-14">
+          <h2
+            className="mb-4 text-[22px] sm:text-[26px]"
+            style={{ fontFamily: "var(--font-heading)" }}
+          >
+            Your influencers
+          </h2>
+          {saved.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-black/15 p-8 text-center">
+              <p className="text-[14px] text-black/50">
+                No saved influencers yet. Describe one on the home page and hit
+                save to keep it here.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {saved.map((g) => (
+                <div
+                  key={g.id}
+                  className="overflow-hidden rounded-2xl border border-black/10"
+                >
+                  <img
+                    src={g.image_url}
+                    alt={g.prompt}
+                    className="aspect-square w-full object-cover"
+                  />
+                  <p className="line-clamp-2 px-3 py-2 text-[12px] text-black/60">
+                    {g.prompt}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">

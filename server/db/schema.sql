@@ -28,6 +28,17 @@ CREATE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions (expires_at);
 
+-- Saved AI influencer image generations (Nano Banana Pro previews users keep).
+CREATE TABLE IF NOT EXISTS generations (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  prompt      TEXT NOT NULL,
+  image_url   TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS generations_user_idx ON generations (user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS influencers (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,

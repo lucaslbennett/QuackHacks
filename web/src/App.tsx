@@ -5,11 +5,13 @@ import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
 import Dashboard from "./components/Dashboard";
+import GenerateScreen from "./components/GenerateScreen";
 import TestPanel from "./components/TestPanel";
 
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [generatePrompt, setGeneratePrompt] = useState<string | null>(null);
 
   return (
     <AuthProvider>
@@ -27,9 +29,17 @@ export default function App() {
         ) : (
           <>
             <AnimatedBackground />
-            <Hero onGetStarted={() => setAuthMode("signup")} />
+            <Hero onGenerate={setGeneratePrompt} />
             <TestPanel />
           </>
+        )}
+
+        {generatePrompt && (
+          <GenerateScreen
+            prompt={generatePrompt}
+            onClose={() => setGeneratePrompt(null)}
+            onRequireSignIn={() => setAuthMode("signup")}
+          />
         )}
 
         {authMode && (
@@ -39,7 +49,9 @@ export default function App() {
             onSwitchMode={setAuthMode}
             onSuccess={() => {
               setAuthMode(null);
-              setShowDashboard(true);
+              // If a generation is in progress, stay on it so the user can now
+              // save; otherwise land on the dashboard.
+              if (!generatePrompt) setShowDashboard(true);
             }}
           />
         )}

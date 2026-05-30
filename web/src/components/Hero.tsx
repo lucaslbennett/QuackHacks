@@ -45,7 +45,11 @@ function CopyIcon() {
   );
 }
 
-export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
+export default function Hero({
+  onGenerate,
+}: {
+  onGenerate: (prompt: string) => void;
+}) {
   const { displayed, done } = useTypewriter({ text: TYPEWRITER_TEXT });
   const [pillsVisible, setPillsVisible] = useState(false);
   const [chatValue, setChatValue] = useState("");
@@ -57,7 +61,9 @@ export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onGetStarted();
+    const prompt = chatValue.trim();
+    if (!prompt) return;
+    onGenerate(prompt);
   };
 
   const handleCopyEmail = async () => {
@@ -105,7 +111,7 @@ export default function Hero({ onGetStarted }: { onGetStarted: () => void }) {
             type="submit"
             aria-label="Send"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition-opacity hover:opacity-80 disabled:opacity-30"
-            disabled={false}
+            disabled={!chatValue.trim()}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path

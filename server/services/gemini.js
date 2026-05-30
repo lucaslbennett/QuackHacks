@@ -1,5 +1,7 @@
+import { writeFile } from "node:fs/promises";
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config.js";
+import { mediaPath, mediaUrl } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("gemini");
@@ -141,4 +143,44 @@ Return JSON:
 }`;
 
   return completeJson({ system, prompt, maxTokens: 1500 });
+}
+
+// Generates an influencer portrait with Nano Banana Pro (Gemini 3 Pro Image)
+// and saves it locally. Returns { url, path }.
+export async function generateInfluencerImage({
+  prompt,
+  influencerId,
+  label = "influencer",
+  aspectRatio = "1:1",
+}) {
+  const c = getClient();
+  log.info("Generating influencer image:", String(prompt).slice(0, 80));
+
+  const fullPrompt =
+    "Photorealistic, high-quality portrait of a social-media influencer for an " +
+    "AI influencer platform. Natural lighting, modern aesthetic, looks like a real " +
+    `person posting on Instagram. Description: ${prompt}`;
+
+  const res = await c.models.generateContent({
+    model: config.gemini.imageModel,
+    contents: fullPrompt,
+    config: {
+      responseModalities: ["IMAGE"],
+      imageConfig: { aspectRatio, imageSize: "2K" },
+    },
+  });
+
+  const parts = res?.candidates?.[0]?.content?.parts || [];
+  const imagePart = parts.find((p) => p?.inlineData?.data);
+  if (!imagePart) {
+    throw new Error("Nano Banana Pro returned no image");
+  }
+
+  const buffer = Buffer.from(imagePart.inlineData.data, "base64");
+  const out = await mediaPath(
+    influencerId || "previews",
+    `${label}-${Date.now()}.png`
+  );
+  await writeFile(out, buffer);
+  return { url: mediaUrl(out), path: out };
 }

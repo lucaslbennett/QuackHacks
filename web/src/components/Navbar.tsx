@@ -34,7 +34,7 @@ export default function Navbar({
 
   return (
     <>
-      <header className="fixed top-0 z-10 flex w-full items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
+      <header className="fixed top-0 z-[57] flex w-full items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
         {/* Logo */}
         <div className="flex items-center gap-3">
           <span

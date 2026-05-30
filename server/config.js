@@ -39,6 +39,8 @@ export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
     model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
+    // Nano Banana Pro (Gemini 3 Pro Image) for image generation/editing.
+    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview",
   },
 
   elevenlabs: {

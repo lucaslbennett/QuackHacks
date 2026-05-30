@@ -43,6 +43,20 @@ export const sessions = {
   purgeExpired: () => query(`DELETE FROM sessions WHERE expires_at <= now()`),
 };
 
+export const generations = {
+  create: ({ userId, prompt, imageUrl }) =>
+    one(
+      `INSERT INTO generations (user_id, prompt, image_url)
+       VALUES ($1,$2,$3) RETURNING *`,
+      [userId, prompt, imageUrl]
+    ),
+  listFor: (userId) =>
+    many(
+      `SELECT * FROM generations WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
+      [userId]
+    ),
+};
+
 export const influencers = {
   create: ({ name, niche, questionnaire, postsPerDay }) =>
     one(
