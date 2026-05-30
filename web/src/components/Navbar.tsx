@@ -11,13 +11,13 @@ export default function Navbar() {
         {/* Logo */}
         <div className="flex items-center gap-3">
           <span
-            className="text-[21px] tracking-tight text-black sm:text-[26px]"
+            className="text-[21px] tracking-tight text-white sm:text-[26px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
             Mainframe®
           </span>
           <span
-            className="select-none text-[25px] text-black sm:text-[30px]"
+            className="select-none text-[25px] text-white sm:text-[30px]"
             style={{ letterSpacing: "-0.02em" }}
             aria-hidden
           >
@@ -26,7 +26,7 @@ export default function Navbar() {
         </div>
 
         {/* Desktop nav links */}
-        <nav className="hidden items-center text-[23px] text-black md:flex">
+        <nav className="hidden items-center text-[23px] text-white md:flex">
           {NAV_LINKS.map((link, i) => (
             <span key={link} className="inline-flex items-center">
               {i > 0 && <span className="mx-1">, </span>}
@@ -40,7 +40,7 @@ export default function Navbar() {
         {/* Desktop CTA */}
         <a
           href="#"
-          className="hidden text-[23px] text-black underline underline-offset-2 transition-opacity hover:opacity-60 md:inline"
+          className="hidden text-[23px] text-white underline underline-offset-2 transition-opacity hover:opacity-60 md:inline"
         >
           Get in touch
         </a>
@@ -54,17 +54,17 @@ export default function Navbar() {
           onClick={() => setMenuOpen((open) => !open)}
         >
           <span
-            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
               menuOpen ? "translate-y-[7px] rotate-45" : ""
             }`}
           />
           <span
-            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
               menuOpen ? "opacity-0" : ""
             }`}
           />
           <span
-            className={`block h-[2px] w-6 bg-black transition-all duration-300 ${
+            className={`block h-[2px] w-6 bg-white transition-all duration-300 ${
               menuOpen ? "-translate-y-[7px] -rotate-45" : ""
             }`}
           />

@@ -72,7 +72,7 @@ export default function Hero() {
             fontSize: "clamp(18px, 4vw, 26px)",
             lineHeight: 1.3,
             fontWeight: 400,
-            color: "#000",
+            color: "#fff",
             filter: "blur(4px)",
           }}
         >
@@ -83,7 +83,7 @@ export default function Hero() {
 
         {/* Typewriter text */}
         <p
-          className="mb-5 min-h-[54px] text-black sm:mb-6"
+          className="mb-5 min-h-[54px] text-white sm:mb-6"
           style={{
             fontSize: "clamp(18px, 4vw, 26px)",
             lineHeight: 1.35,
@@ -92,7 +92,7 @@ export default function Hero() {
         >
           {displayed}
           {!done && (
-            <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-black" />
+            <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-white" />
           )}
         </p>
 
