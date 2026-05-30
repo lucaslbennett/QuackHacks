@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTypewriter } from "../hooks/useTypewriter";
 
 const TYPEWRITER_TEXT =
-  "I'm your always-on AI influencer. I create and post videos 24/7, grow your audience, and send you status reports while you sleep. Ready to put your brand on autopilot?";
+  "I'm your always-on AI influencer. I post videos 24/7 and grow your revenue while you sleep.";
 
 const PILL_BUTTONS = [
   "Launch my AI influencer",
