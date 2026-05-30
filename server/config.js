@@ -61,10 +61,16 @@ export const config = {
     projectId: process.env.BROWSERBASE_PROJECT_ID || "",
     // Stagehand needs a model for its act/extract reasoning. Reuse Gemini.
     env: process.env.STAGEHAND_ENV || "BROWSERBASE",
+    // Residential proxies reduce how often Instagram throws a CAPTCHA and
+    // improve Browserbase's background solve rate. On by default.
+    proxies: bool(process.env.BROWSERBASE_PROXIES, true),
+    // "verified" sessions use a real device fingerprint (lower bot-detection).
+    // On by default; disable if your project doesn't have it enabled.
+    verified: bool(process.env.BROWSERBASE_VERIFIED, true),
   },
 
   verification: {
-    // Pluggable email provider. "imap" | "mailosaur" | "manual"
+    // Pluggable email provider. "mailosaur" | "manual"
     emailProvider: process.env.EMAIL_PROVIDER || "manual",
     emailApiKey: process.env.EMAIL_API_KEY || "",
     mailosaurServerId: process.env.MAILOSAUR_SERVER_ID || "",

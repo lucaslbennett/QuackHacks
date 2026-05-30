@@ -115,12 +115,13 @@ export const testApi = {
 };
 
 // Sample data used to auto-fill every input the test flow needs.
+// Email is left blank so the server provisions a real inbox-backed address
+// (via the configured email provider) that can receive the IG signup code.
 export function autofillInputs(): TestInputs {
-  const stamp = Date.now();
   return {
     name: "Nova Sterling",
     niche: "streetwear fashion",
-    email: `qa.nova.${stamp}@example.com`,
+    email: "",
     phone: "+15555550123",
     sources: ["https://www.instagram.com/instagram/"],
   };

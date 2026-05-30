@@ -7,7 +7,7 @@ import * as fal from "../services/fal.js";
 import * as stagehand from "../services/browser/stagehand.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { pool } from "../db/pool.js";
-import { submitManualCode } from "../services/verification.js";
+import { submitManualCode, generateEmail } from "../services/verification.js";
 import { createLogger, formatError } from "../lib/logger.js";
 
 const router = Router();
@@ -138,7 +138,7 @@ router.post("/smoke/spawn-user", async (req, res) => {
     niche: req.body.niche || "fashion",
     questionnaire: req.body.questionnaire || {},
     sources: req.body.sources || [],
-    email: req.body.email || `qa.${Date.now()}@example.com`,
+    email: req.body.email || generateEmail({ seed: req.body.name || "qa" }),
     phone: req.body.phone || "",
   };
 

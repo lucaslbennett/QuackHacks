@@ -7,6 +7,7 @@ import { scrapeInstagramProfile } from "../services/browser/scrapeProfile.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { postReel } from "../services/browser/postReel.js";
 import { scrapeAccountMetrics } from "../services/browser/scrapeMetrics.js";
+import { generateEmail } from "../services/verification.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
 import { mediaUrl } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
@@ -63,13 +64,22 @@ export async function spawnAccount({ influencerId }) {
 
   let account = await repo.igAccounts.forInfluencer(influencerId);
   if (!account) account = await repo.igAccounts.create({ influencerId });
+
+  // Provision a fresh inbox-backed address if none was set, so the email
+  // verification code can be polled automatically during signup.
+  let email = account.email;
+  if (!email) {
+    email = generateEmail({ seed: influencer.handle || influencer.name });
+    account = await repo.igAccounts.update(account.id, { email });
+  }
+
   await repo.igAccounts.update(account.id, { status: "creating" });
   await repo.influencers.update(influencerId, { status: "spawning" });
 
   const created = await createInstagramAccount({
     influencerId,
     persona: influencer.persona,
-    email: account.email,
+    email,
     phone: account.phone,
   });
 
