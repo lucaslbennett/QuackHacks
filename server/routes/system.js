@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { config, missingKeys } from "../config.js";
-import * as anthropic from "../services/anthropic.js";
+import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
 import * as fal from "../services/fal.js";
 import * as stagehand from "../services/browser/stagehand.js";
@@ -22,7 +22,7 @@ router.get("/status", async (req, res) => {
     env: config.env,
     integrations: {
       database: db,
-      anthropic: anthropic.isConfigured(),
+      gemini: gemini.isConfigured(),
       elevenlabs: eleven.isConfigured(),
       fal: fal.isConfigured(),
       browserbase: stagehand.isConfigured(),
@@ -38,7 +38,7 @@ router.get("/status", async (req, res) => {
 // Smoke test: generate a persona without persisting.
 router.post("/smoke/persona", async (req, res) => {
   try {
-    const persona = await anthropic.synthesizePersona({
+    const persona = await gemini.synthesizePersona({
       name: req.body.name || "Test Creator",
       niche: req.body.niche || "fashion",
       questionnaire: req.body.questionnaire || {},

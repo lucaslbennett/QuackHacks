@@ -2,7 +2,7 @@ import cron from "node-cron";
 import * as repo from "../db/repo.js";
 import { config } from "../config.js";
 import { randomizedPostTimes } from "../lib/util.js";
-import { createLogger } from "../lib/logger.js";
+import { createLogger, formatError } from "../lib/logger.js";
 
 const log = createLogger("scheduler");
 
@@ -58,14 +58,14 @@ export function startScheduler() {
   // Plan content once each morning.
   tasks.push(
     cron.schedule("5 8 * * *", () => {
-      planDailyContent().catch((e) => log.error("planDailyContent error", e.message));
+      planDailyContent().catch((e) => log.error("planDailyContent error", formatError(e)));
     })
   );
 
   // Scrape metrics a few times a day.
   tasks.push(
     cron.schedule("0 */6 * * *", () => {
-      planMetrics().catch((e) => log.error("planMetrics error", e.message));
+      planMetrics().catch((e) => log.error("planMetrics error", formatError(e)));
     })
   );
 

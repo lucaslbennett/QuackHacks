@@ -15,10 +15,10 @@
     "node": ">=20.19"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@browserbasehq/stagehand": "^3.4.0",
     "@elevenlabs/elevenlabs-js": "^2.49.0",
     "@fal-ai/client": "^1.10.1",
+    "@google/genai": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

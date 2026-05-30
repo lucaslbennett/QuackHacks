@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 
 import { config, missingKeys } from "./config.js";
-import { createLogger } from "./lib/logger.js";
+import { createLogger, formatError } from "./lib/logger.js";
 import { migrate } from "./db/migrate.js";
 import { startRunner } from "./jobs/runner.js";
 import { startScheduler } from "./jobs/scheduler.js";
@@ -61,7 +61,7 @@ async function boot() {
     try {
       await migrate();
     } catch (err) {
-      log.error("Migration failed on boot:", err.message);
+      log.error("Migration failed on boot:", formatError(err));
     }
   }
 

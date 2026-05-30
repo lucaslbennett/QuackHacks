@@ -1,7 +1,7 @@
 import * as repo from "../db/repo.js";
 import { handlers } from "./pipeline.js";
 import { config } from "../config.js";
-import { createLogger } from "../lib/logger.js";
+import { createLogger, formatError } from "../lib/logger.js";
 
 const log = createLogger("runner");
 
@@ -13,7 +13,7 @@ async function processOne() {
   try {
     job = await repo.jobs.claimNext();
   } catch (err) {
-    log.error("claim failed:", err.message);
+    log.error("claim failed:", formatError(err));
     return false;
   }
   if (!job) return false;
@@ -31,7 +31,7 @@ async function processOne() {
     log.info(`Job ${job.type} (${job.id}) done`);
   } catch (err) {
     const canRetry = job.attempts < job.max_attempts;
-    log.error(`Job ${job.type} (${job.id}) failed:`, err.message, canRetry ? "(will retry)" : "(giving up)");
+    log.error(`Job ${job.type} (${job.id}) failed:`, formatError(err), canRetry ? "(will retry)" : "(giving up)");
     await repo.jobs.fail(job.id, err.stack || err.message, canRetry);
   }
   return true;
@@ -60,7 +60,7 @@ export function startRunner() {
   }
   if (timer) return;
   const ms = Math.max(5, config.scheduler.pollSeconds) * 1000;
-  timer = setInterval(() => tick().catch((e) => log.error("tick error", e.message)), ms);
+  timer = setInterval(() => tick().catch((e) => log.error("tick error", formatError(e))), ms);
   log.info(`Job runner started (poll every ${ms / 1000}s)`);
   tick().catch(() => {});
 }

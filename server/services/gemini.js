@@ -1,36 +1,39 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { config } from "../config.js";
 import { createLogger } from "../lib/logger.js";
 
-const log = createLogger("anthropic");
+const log = createLogger("gemini");
 
 let client = null;
 function getClient() {
-  if (!config.anthropic.apiKey) {
-    throw new Error("ANTHROPIC_API_KEY not configured");
+  if (!config.gemini.apiKey) {
+    throw new Error("GEMINI_API_KEY not configured");
   }
-  if (!client) client = new Anthropic({ apiKey: config.anthropic.apiKey });
+  if (!client) client = new GoogleGenAI({ apiKey: config.gemini.apiKey });
   return client;
 }
 
 export function isConfigured() {
-  return Boolean(config.anthropic.apiKey);
+  return Boolean(config.gemini.apiKey);
 }
 
-// Low level helper that asks Claude for JSON and parses it defensively.
+// Low level helper that asks Gemini for JSON and parses it defensively.
 async function completeJson({ system, prompt, maxTokens = 2000 }) {
   const c = getClient();
-  const res = await c.messages.create({
-    model: config.anthropic.model,
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: "user", content: prompt }],
+  const res = await c.models.generateContent({
+    model: config.gemini.model,
+    contents: prompt,
+    config: {
+      systemInstruction: system,
+      maxOutputTokens: maxTokens,
+      responseMimeType: "application/json",
+      // Flash-Lite is the lightweight tier; keep thinking off so the whole
+      // token budget is spent on the JSON answer (lower latency + cost).
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   });
-  const text = res.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
+  const text = (res.text || "").trim();
+  if (!text) throw new Error("Empty response from Gemini");
   return parseJson(text);
 }
 

@@ -1,5 +1,5 @@
 import * as repo from "../db/repo.js";
-import * as anthropic from "../services/anthropic.js";
+import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
 import * as fal from "../services/fal.js";
 import { assembleReel } from "../services/video.js";
@@ -32,7 +32,7 @@ export async function clonePersona({ influencerId }) {
     }
   }
 
-  const persona = await anthropic.synthesizePersona({
+  const persona = await gemini.synthesizePersona({
     name: influencer.name,
     niche: influencer.niche,
     questionnaire: influencer.questionnaire,
@@ -102,7 +102,7 @@ export async function generateContent({ influencerId, contentId, topic }) {
   contentId = item.id;
 
   await repo.content.update(contentId, { status: "scripting" });
-  const script = await anthropic.generateScript({ persona, topic: topic || item.topic });
+  const script = await gemini.generateScript({ persona, topic: topic || item.topic });
   await repo.content.update(contentId, {
     title: script.title,
     topic: script.topic,

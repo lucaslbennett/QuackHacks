@@ -1,6 +1,6 @@
 import pg from "pg";
 import { config } from "../config.js";
-import { createLogger } from "../lib/logger.js";
+import { createLogger, formatError } from "../lib/logger.js";
 
 const log = createLogger("db");
 
@@ -15,7 +15,7 @@ export const pool = new pg.Pool({
 });
 
 pool.on("error", (err) => {
-  log.error("Unexpected idle client error", err.message);
+  log.error("Unexpected idle client error", formatError(err));
 });
 
 export async function query(text, params) {

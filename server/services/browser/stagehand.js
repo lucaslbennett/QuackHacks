@@ -9,7 +9,7 @@ export function isConfigured() {
 }
 
 // Creates an initialized Stagehand instance backed by Browserbase, using
-// Anthropic as the reasoning model for act()/extract(). Caller must close().
+// Gemini as the reasoning model for act()/extract(). Caller must close().
 export async function createStagehand({ sessionData } = {}) {
   if (!isConfigured()) {
     throw new Error("BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required");
@@ -19,8 +19,8 @@ export async function createStagehand({ sessionData } = {}) {
     apiKey: config.browserbase.apiKey,
     projectId: config.browserbase.projectId,
     model: {
-      modelName: `anthropic/${config.anthropic.model}`,
-      apiKey: config.anthropic.apiKey,
+      modelName: `google/${config.gemini.model}`,
+      apiKey: config.gemini.apiKey,
     },
     verbose: process.env.DEBUG ? 2 : 1,
     browserbaseSessionCreateParams: {

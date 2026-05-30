@@ -36,9 +36,9 @@ export const config = {
     sessionTtlDays: parseInt(process.env.SESSION_TTL_DAYS || "30", 10),
   },
 
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY || "",
-    model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-latest",
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
+    model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
   },
 
   elevenlabs: {
@@ -57,7 +57,7 @@ export const config = {
   browserbase: {
     apiKey: process.env.BROWSERBASE_API_KEY || "",
     projectId: process.env.BROWSERBASE_PROJECT_ID || "",
-    // Stagehand needs a model for its act/extract reasoning. Reuse Anthropic.
+    // Stagehand needs a model for its act/extract reasoning. Reuse Gemini.
     env: process.env.STAGEHAND_ENV || "BROWSERBASE",
   },
 
@@ -86,7 +86,7 @@ export const config = {
 export function missingKeys() {
   const missing = [];
   if (!config.databaseUrl) missing.push("DATABASE_URL");
-  if (!config.anthropic.apiKey) missing.push("ANTHROPIC_API_KEY");
+  if (!config.gemini.apiKey) missing.push("GEMINI_API_KEY");
   if (!config.elevenlabs.apiKey) missing.push("ELEVENLABS_API_KEY");
   if (!config.fal.apiKey) missing.push("FAL_KEY");
   if (!config.browserbase.apiKey) missing.push("BROWSERBASE_API_KEY");
