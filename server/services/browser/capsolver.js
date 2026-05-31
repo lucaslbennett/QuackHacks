@@ -44,9 +44,14 @@ export async function getBalance() {
   return { balance: data.balance, packages: data.packages || [] };
 }
 
-// Builds the CapSolver task body from a detected reCAPTCHA. Enterprise vs.
-// standard v2 use different task types; everything else is optional and only
-// included when present so we don't send empty fields.
+// Builds the CapSolver task body from a detected reCAPTCHA. Two axes pick the
+// task type:
+//   - Enterprise vs standard v2 (different token + verification path)
+//   - Proxied vs ProxyLess: when a `proxy` is given, CapSolver solves THROUGH it
+//     so the token's IP/fingerprint matches the browser session (required for
+//     reCAPTCHA Enterprise to accept the token). Without a proxy we use the
+//     ProxyLess variants (CapSolver's own datacenter IP).
+// Everything else is optional and only included when present.
 function buildReCaptchaTask({
   websiteURL,
   websiteKey,
@@ -55,12 +60,18 @@ function buildReCaptchaTask({
   pageAction,
   enterprisePayload,
   apiDomain,
+  proxy,
 }) {
-  const task = {
-    type: isEnterprise ? "ReCaptchaV2EnterpriseTaskProxyLess" : "ReCaptchaV2TaskProxyLess",
-    websiteURL,
-    websiteKey,
-  };
+  const useProxy = Boolean(proxy);
+  const type = isEnterprise
+    ? useProxy
+      ? "ReCaptchaV2EnterpriseTask"
+      : "ReCaptchaV2EnterpriseTaskProxyLess"
+    : useProxy
+      ? "ReCaptchaV2Task"
+      : "ReCaptchaV2TaskProxyLess";
+  const task = { type, websiteURL, websiteKey };
+  if (useProxy) task.proxy = proxy;
   if (isInvisible) task.isInvisible = true;
   if (pageAction) task.pageAction = pageAction;
   if (enterprisePayload) task.enterprisePayload = enterprisePayload;

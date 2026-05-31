@@ -70,7 +70,7 @@ export async function spawnAccount({ influencerId }) {
   // verification code can be polled automatically during signup.
   let email = account.email;
   if (!email) {
-    email = generateEmail({ seed: influencer.handle || influencer.name });
+    email = await generateEmail({ seed: influencer.handle || influencer.name });
     account = await repo.igAccounts.update(account.id, { email });
   }
 
@@ -85,6 +85,9 @@ export async function spawnAccount({ influencerId }) {
 
   const updated = await repo.igAccounts.update(account.id, {
     username: created.username,
+    // Persist the address actually used — createInstagramAccount may rotate it
+    // if Instagram rejected the original (disposable domain blocked).
+    email: created.email || email,
     password_enc: encryptSecret(created.password),
     full_name: created.fullName,
     status: created.loggedIn ? "active" : "failed",

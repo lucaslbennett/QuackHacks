@@ -121,11 +121,32 @@ export async function createStagehand({ sessionData, onSession } = {}) {
     verbose: process.env.DEBUG ? 2 : 1,
     browserbaseSessionCreateParams: {
       projectId: config.browserbase.projectId,
-      // Residential proxies make IG far less likely to throw a CAPTCHA and
-      // materially improve the background reCAPTCHA-Enterprise solve rate.
-      // PAID plans only, so only include the key when explicitly enabled —
-      // sending proxies:true on a free plan makes session creation fail (402).
-      ...(config.browserbase.proxies ? { proxies: true } : {}),
+      // Proxy config, in priority order:
+      //  1. A custom EXTERNAL proxy (BROWSERBASE_PROXY_SERVER) — set this to the
+      //     SAME proxy as CAPSOLVER_PROXY so the session egresses from the IP the
+      //     CAPTCHA was solved on. reCAPTCHA Enterprise binds the token to the
+      //     solver IP/fingerprint, so matching them is what lets an injected
+      //     CapSolver token actually clear IG's challenge.
+      //  2. Browserbase's built-in residential proxies (PAID; proxies:true on a
+      //     free plan fails session creation with 402), as a fallback.
+      ...(config.browserbase.proxyServer
+        ? {
+            proxies: [
+              {
+                type: "external",
+                server: config.browserbase.proxyServer,
+                ...(config.browserbase.proxyUsername
+                  ? { username: config.browserbase.proxyUsername }
+                  : {}),
+                ...(config.browserbase.proxyPassword
+                  ? { password: config.browserbase.proxyPassword }
+                  : {}),
+              },
+            ],
+          }
+        : config.browserbase.proxies
+          ? { proxies: true }
+          : {}),
       browserSettings: {
         // Reuse a stored Browserbase context for persistent IG sessions.
         context: sessionData?.contextId

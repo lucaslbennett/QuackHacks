@@ -66,7 +66,7 @@ async function buildPersona(useGemini) {
 
 async function runOnce({ index, persona, debugRoot }) {
   const debugDir = path.join(debugRoot, `run-${index}`);
-  const email = generateEmail({ seed: `qa-nova-${index}` });
+  const email = await generateEmail({ seed: `qa-nova-${index}` });
   const influencerId = `signup-test-${Date.now()}-${index}`;
 
   log.info("─".repeat(64));
@@ -140,8 +140,11 @@ async function main() {
     log.error("Missing keys:", missingKeys().join(", ") || "(none reported)");
     process.exit(2);
   }
-  if (config.verification.emailProvider !== "mailosaur") {
-    log.warn(`EMAIL_PROVIDER is "${config.verification.emailProvider}" — automated email-code retrieval needs "mailosaur".`);
+  const provider = config.verification.emailProvider;
+  if (!["maildotm", "mailosaur"].includes(provider)) {
+    log.warn(`EMAIL_PROVIDER is "${provider}" — automated email-code retrieval needs "maildotm" (recommended) or "mailosaur".`);
+  } else if (provider === "mailosaur") {
+    log.warn(`EMAIL_PROVIDER is "mailosaur" — Mailosaur policy-blocks Instagram's emails, so the code will never arrive. Use "maildotm".`);
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");

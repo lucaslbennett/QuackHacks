@@ -1,11 +1,21 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { config } from "../../config.js";
 import { withStagehand } from "./stagehand.js";
 import * as capsolver from "./capsolver.js";
-import { waitForEmailCode } from "../verification.js";
+import { waitForEmailCode, generateEmail } from "../verification.js";
 import { sleep, randomInt } from "../../lib/util.js";
 import { createLogger } from "../../lib/logger.js";
+
+// Instagram serves reCAPTCHA v2 *Enterprise* on its signup + "confirm it's you"
+// challenge. Solving these sitekeys as standard v2 yields a token IG rejects, so
+// we always solve them with CapSolver's Enterprise task type. DOM detection of
+// "enterprise" is unreliable here (cross-origin frames), so we additionally key
+// off the known sitekey(s) as a hard signal.
+const KNOWN_ENTERPRISE_SITEKEYS = new Set([
+  "6LdktRgnAAAAAFQ6icovYI2-masYLFjEFyzQzpix", // Instagram / Meta signup + challenge
+]);
 
 const log = createLogger("signup");
 
@@ -285,38 +295,85 @@ async function clickRecaptchaCheckbox(page, log) {
 // most reliable signal — it survives both v2 and Enterprise and works even when
 // the widget div lacks a data-sitekey attribute.
 function readRecaptchaParams() {
-  const out = { websiteKey: null, isEnterprise: false, isInvisible: false };
+  const out = { websiteKey: null, isEnterprise: false, isInvisible: false, apiDomain: null };
 
-  const widget = document.querySelector("[data-sitekey]");
-  if (widget) {
-    out.websiteKey = widget.getAttribute("data-sitekey");
-    if (widget.getAttribute("data-size") === "invisible") out.isInvisible = true;
+  // Prefer the LIVE widget's anchor/bframe iframe (the `k=` query param). This
+  // reflects the CAPTCHA actually being shown right now and is the only signal
+  // that reliably distinguishes Enterprise (.../recaptcha/enterprise/...) from
+  // standard v2 (.../recaptcha/api2/...). Scan every recaptcha iframe and prefer
+  // an Enterprise one — IG's signup page can carry a stray non-enterprise widget
+  // whose data-sitekey would otherwise mask the Enterprise challenge.
+  const iframes = Array.from(document.querySelectorAll('iframe[src*="recaptcha"]'));
+  let chosen = null;
+  for (const f of iframes) {
+    const src = f.getAttribute("src") || "";
+    if (!src.includes("k=")) continue;
+    let u;
+    try {
+      u = new URL(src, location.href);
+    } catch {
+      continue; // malformed src — skip
+    }
+    const k = u.searchParams.get("k");
+    if (!k) continue;
+    const isEnterprise = u.pathname.includes("/enterprise/");
+    const isInvisible = u.searchParams.get("size") === "invisible";
+    // CapSolver needs the host that serves reCAPTCHA (google.com vs
+    // recaptcha.net) when it differs from the default — pass it through.
+    const apiDomain = /recaptcha\.net$/i.test(u.hostname) ? u.hostname : null;
+    // First match wins, but an Enterprise widget always overrides a v2 one.
+    if (!chosen || (isEnterprise && !chosen.isEnterprise)) {
+      chosen = { websiteKey: k, isEnterprise, isInvisible, apiDomain };
+    }
+  }
+  if (chosen) {
+    out.websiteKey = chosen.websiteKey;
+    out.isEnterprise = chosen.isEnterprise;
+    out.isInvisible = chosen.isInvisible;
+    out.apiDomain = chosen.apiDomain;
   }
 
-  const iframe = document.querySelector('iframe[src*="recaptcha"][src*="k="]');
-  if (iframe) {
-    try {
-      const u = new URL(iframe.getAttribute("src"), location.href);
-      const k = u.searchParams.get("k");
-      if (k && !out.websiteKey) out.websiteKey = k;
-      if (u.pathname.includes("/enterprise/")) out.isEnterprise = true;
-      if (u.searchParams.get("size") === "invisible") out.isInvisible = true;
-    } catch {
-      /* malformed src — ignore */
+  // Fall back to an explicit widget attribute only if no live iframe key exists.
+  if (!out.websiteKey) {
+    const widget = document.querySelector("[data-sitekey]");
+    if (widget) {
+      out.websiteKey = widget.getAttribute("data-sitekey");
+      if (widget.getAttribute("data-size") === "invisible") out.isInvisible = true;
     }
   }
 
-  if (!out.isEnterprise && document.querySelector('script[src*="recaptcha/enterprise"]')) {
-    out.isEnterprise = true;
+  // Enterprise can also be inferred from the loaded API (the enterprise.js
+  // script or window.grecaptcha.enterprise), which covers cases where the key
+  // came from a data-sitekey attribute rather than the iframe URL.
+  if (!out.isEnterprise) {
+    if (document.querySelector('script[src*="recaptcha/enterprise"]')) {
+      out.isEnterprise = true;
+    } else if (window.grecaptcha && window.grecaptcha.enterprise) {
+      out.isEnterprise = true;
+    }
   }
+
   return out.websiteKey ? out : null;
 }
 
 // Finds the reCAPTCHA on the top document or in any child frame (IG sometimes
-// hosts the widget inside a frame). Returns the params or null.
+// hosts the widget inside a frame) and MERGES the signals: we keep the first
+// sitekey found but OR-together the enterprise/invisible flags across every
+// frame. This matters because the sitekey and the "this is Enterprise" signal
+// can live in different frames — returning on the first frame (the old behavior)
+// reported enterprise:false and made us solve IG's Enterprise challenge as a
+// plain v2, yielding a token IG rejects.
 async function detectRecaptcha(page) {
-  let info = await page.evaluate(readRecaptchaParams).catch(() => null);
-  if (info?.websiteKey) return info;
+  const merged = { websiteKey: null, isEnterprise: false, isInvisible: false, apiDomain: null };
+  const consider = (info) => {
+    if (!info) return;
+    if (info.websiteKey && !merged.websiteKey) merged.websiteKey = info.websiteKey;
+    if (info.isEnterprise) merged.isEnterprise = true;
+    if (info.isInvisible) merged.isInvisible = true;
+    if (info.apiDomain && !merged.apiDomain) merged.apiDomain = info.apiDomain;
+  };
+
+  consider(await page.evaluate(readRecaptchaParams).catch(() => null));
   let frames = [];
   try {
     frames = page.frames() || [];
@@ -324,26 +381,28 @@ async function detectRecaptcha(page) {
     frames = [];
   }
   for (const frame of frames) {
-    info = await frame.evaluate(readRecaptchaParams).catch(() => null);
-    if (info?.websiteKey) return info;
+    consider(await frame.evaluate(readRecaptchaParams).catch(() => null));
   }
-  return null;
+  return merged.websiteKey ? merged : null;
 }
 
 // Runs IN the page/frame context. Writes the solved token into every
 // g-recaptcha-response textarea and fires the widget success callback(s). The
 // callbacks live under window.___grecaptcha_cfg.clients in a version-specific,
 // deeply-nested shape, so we DFS for any function under a "callback" key and
-// invoke it with the token. Returns how many fields/callbacks were applied.
+// invoke it with the token. Returns { fields, callbacks } counts so the caller
+// can SEE whether the token actually reached the widget (a callbacks:0 result
+// means we're relying on the getResponse patch + the Next click instead).
 function applyRecaptchaToken(token) {
-  let applied = 0;
+  let fields = 0;
+  let callbacks = 0;
 
-  const fields = Array.from(
+  const responseFields = Array.from(
     document.querySelectorAll(
       'textarea#g-recaptcha-response, textarea[name="g-recaptcha-response"], textarea[id^="g-recaptcha-response"]'
     )
   );
-  for (const field of fields) {
+  for (const field of responseFields) {
     field.value = token;
     try {
       field.dispatchEvent(new Event("input", { bubbles: true }));
@@ -351,7 +410,7 @@ function applyRecaptchaToken(token) {
     } catch {
       /* ignore */
     }
-    applied += 1;
+    fields += 1;
   }
 
   try {
@@ -370,10 +429,13 @@ function applyRecaptchaToken(token) {
           } catch {
             continue;
           }
-          if (typeof val === "function" && key.toLowerCase().includes("callback")) {
+          // Only fire the SUCCESS callback (the param reCAPTCHA stores under the
+          // exact key "callback"). Firing "expired-callback"/"error-callback"
+          // would tell IG the token expired/failed and actively reset the solve.
+          if (typeof val === "function" && key.toLowerCase() === "callback") {
             try {
               val(token);
-              applied += 1;
+              callbacks += 1;
             } catch {
               /* not the success callback — keep scanning */
             }
@@ -386,7 +448,7 @@ function applyRecaptchaToken(token) {
   } catch {
     /* no grecaptcha config in this document */
   }
-  return applied;
+  return { fields, callbacks };
 }
 
 // Runs IN the top page context. Guarantees a g-recaptcha-response field carries
@@ -403,9 +465,50 @@ function ensureRecaptchaField(token) {
   field.value = token;
 }
 
-// Injects a solved token into the page + every frame and fires the callbacks.
+// Runs IN the page/frame context. Instagram reads the token by calling
+// grecaptcha.enterprise.getResponse() when its "Next" button is clicked — but
+// that returns "" because CapSolver solved the challenge OUT OF BAND (the widget
+// never registered a solve). We patch getResponse (both the standard and
+// enterprise namespaces) to return our injected token so IG's submit handler
+// picks it up. Without this, the textarea/callback alone often isn't read.
+function patchRecaptchaGetResponse(token) {
+  const force = () => token;
+  try {
+    if (window.grecaptcha) {
+      try {
+        window.grecaptcha.getResponse = force;
+      } catch {
+        /* non-writable — ignore */
+      }
+      if (window.grecaptcha.enterprise) {
+        try {
+          window.grecaptcha.enterprise.getResponse = force;
+        } catch {
+          /* non-writable — ignore */
+        }
+      }
+    }
+  } catch {
+    /* no grecaptcha in this context */
+  }
+}
+
+// Injects a solved token into the page + every frame: writes the response
+// field(s), fires the success callback(s), and patches getResponse() so IG's
+// submit handler reads our token. Returns aggregate { fields, callbacks } counts
+// across the top document and all frames.
 async function injectRecaptchaToken(page, token) {
-  let applied = (await page.evaluate(applyRecaptchaToken, token).catch(() => 0)) || 0;
+  const totals = { fields: 0, callbacks: 0 };
+  const add = (r) => {
+    if (r && typeof r === "object") {
+      totals.fields += r.fields || 0;
+      totals.callbacks += r.callbacks || 0;
+    }
+  };
+
+  add(await page.evaluate(applyRecaptchaToken, token).catch(() => null));
+  await page.evaluate(patchRecaptchaGetResponse, token).catch(() => {});
+
   let frames = [];
   try {
     frames = page.frames() || [];
@@ -413,10 +516,11 @@ async function injectRecaptchaToken(page, token) {
     frames = [];
   }
   for (const frame of frames) {
-    applied += (await frame.evaluate(applyRecaptchaToken, token).catch(() => 0)) || 0;
+    add(await frame.evaluate(applyRecaptchaToken, token).catch(() => null));
+    await frame.evaluate(patchRecaptchaGetResponse, token).catch(() => {});
   }
   await page.evaluate(ensureRecaptchaField, token).catch(() => {});
-  return applied > 0;
+  return totals;
 }
 
 // End-to-end programmatic solve: detect the reCAPTCHA, get a token from
@@ -435,36 +539,103 @@ async function solveCaptchaViaApi({ page, log }) {
   } catch {
     /* page may be gone */
   }
+
+  // Decide the task type. IG's reCAPTCHA is Enterprise; a v2 token is rejected.
+  // DOM detection is unreliable across cross-origin frames, so OR it with a
+  // known-sitekey lookup and the config force flag. This is THE fix for "solved
+  // but never clears": we were sending ReCaptchaV2TaskProxyLess for an Enterprise
+  // sitekey, so CapSolver returned a token IG would never accept.
+  const isEnterprise =
+    info.isEnterprise ||
+    config.capsolver.forceEnterprise ||
+    KNOWN_ENTERPRISE_SITEKEYS.has(info.websiteKey);
+
   log.info("CapSolver: solving reCAPTCHA", {
-    enterprise: info.isEnterprise,
+    sitekey: info.websiteKey,
+    enterprise: isEnterprise,
+    enterpriseSource: info.isEnterprise
+      ? "dom"
+      : KNOWN_ENTERPRISE_SITEKEYS.has(info.websiteKey)
+        ? "known-sitekey"
+        : config.capsolver.forceEnterprise
+          ? "forced"
+          : "no",
     invisible: info.isInvisible,
+    apiDomain: info.apiDomain || "(default)",
+    proxied: Boolean(config.capsolver.proxy),
   });
   try {
     const token = await capsolver.solveReCaptcha({
       websiteURL,
       websiteKey: info.websiteKey,
-      isEnterprise: info.isEnterprise,
+      isEnterprise,
       isInvisible: info.isInvisible,
+      apiDomain: info.apiDomain || undefined,
+      // Solve through the same proxy the browser uses (when configured) so the
+      // Enterprise token's IP/fingerprint matches and IG accepts it.
+      proxy: config.capsolver.proxy || undefined,
     });
-    const injected = await injectRecaptchaToken(page, token);
-    log.info("CapSolver: token injected", { injected });
-    return injected;
+    const { fields, callbacks } = await injectRecaptchaToken(page, token);
+    // We consider the token transferred if it reached a response field, a
+    // success callback, OR (always) the getResponse patch. IG still needs its
+    // modal's Next button clicked (caller does that) to actually advance.
+    log.info("CapSolver: token transferred to widget", {
+      tokenLength: token.length,
+      responseFields: fields,
+      callbacksFired: callbacks,
+    });
+    return true;
   } catch (err) {
     log.warn("CapSolver: solve failed", err?.message);
     return false;
   }
 }
 
-// Ensures a CAPTCHA challenge is cleared before proceeding:
-//   1. Wait for Browserbase's background solver (all plans; best-effort, can
-//      take up to ~30s and is strongest with proxies/stealth which the free
-//      plan lacks).
-//   2. If CapSolver is configured, solve the reCAPTCHA programmatically (sitekey
-//      -> token -> inject). This clears reCAPTCHA Enterprise on any plan.
-//   3. If it hasn't cleared after a grace period, nudge the v2 checkbox a few
-//      times to (re)engage the solver on the visible challenge.
-//   4. Keep polling (surfacing the live session URL for an optional human solve)
-//      until the challenge clears or we time out.
+// Instagram's "Help us confirm it's you" modal does NOT auto-advance when the
+// reCAPTCHA token is injected — its blue "Next"/"Continue" button must be
+// clicked to POST the solved challenge. Without this, a perfectly valid token
+// just sits in the form and the modal never closes (the exact "solved but not
+// applied to the screen" symptom). Best-effort; returns whether a click fired.
+async function submitSolvedCaptcha(page, log) {
+  const clicked = await clickButtonByText(page, [
+    "Next",
+    "Continue",
+    "Submit",
+    "Confirm",
+    "Done",
+  ]);
+  if (clicked) log.info("Submitted solved CAPTCHA (clicked Next/Continue)");
+  else log.warn("Could not find a Next/Continue button to submit the solved CAPTCHA");
+  return clicked;
+}
+
+// Polls captchaPresent() at a short interval until the challenge clears or we
+// hit the timeout. Lets the CapSolver fast path confirm a clear in seconds
+// instead of grinding through the long manual-wait loop.
+async function waitForCaptchaCleared(page, { timeoutMs = 12000, intervalMs = 1500 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!(await captchaPresent(page))) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(intervalMs);
+  }
+}
+
+// Ensures a CAPTCHA challenge is cleared before proceeding. Two paths:
+//
+//   FAST PATH (CapSolver configured) — the primary, ~15-45s route:
+//     detect sitekey -> CapSolver solve (Enterprise task) -> transfer token
+//     (response field + success callback + getResponse patch) -> click IG's
+//     "Next" -> poll for a quick clear. We deliberately do NOT click the v2
+//     checkbox here: clicking it opens the image-grid challenge, which fights
+//     token injection and is what made the old flow crawl for minutes. A few
+//     back-to-back tries clear it in well under a minute.
+//
+//   FALLBACK PATH (no CapSolver, or it couldn't clear it):
+//     click the v2 checkbox to engage Browserbase's background solver, then poll
+//     (surfacing the live session URL for an optional human solve) until the
+//     challenge clears or manualTimeoutMs elapses.
+//
 // Returns true if a CAPTCHA was encountered, false if none was present. Never
 // throws.
 async function ensureCaptchaSolved({
@@ -474,30 +645,46 @@ async function ensureCaptchaSolved({
   log,
   manualTimeoutMs = Number(process.env.CAPTCHA_WAIT_MS) || 180000,
 }) {
-  await (waitForCaptcha?.() ?? Promise.resolve(false));
+  // Give any in-flight Browserbase background solve a brief chance to finish
+  // (it often clears the first post-submit challenge for free), but cap the wait
+  // so CapSolver isn't blocked behind it for tens of seconds.
+  await (waitForCaptcha?.({ startGraceMs: 1500, timeoutMs: 8000 }) ?? Promise.resolve(false));
 
   // No challenge present (none appeared or the solver already cleared it).
   if (!(await captchaPresent(page))) return false;
 
-  log.warn("CAPTCHA challenge present — initiating + waiting for Browserbase to solve", { sessionUrl });
-  // Click the checkbox right away to INITIATE the v2 challenge; Browserbase's
-  // solver engages on the resulting challenge. Then re-check the barrier.
+  // ---- FAST PATH: CapSolver programmatic solve -------------------------------
+  if (capsolver.isConfigured()) {
+    const maxApiTries = 3;
+    for (let attempt = 1; attempt <= maxApiTries; attempt++) {
+      if (!(await captchaPresent(page))) {
+        log.info("CAPTCHA cleared");
+        return true;
+      }
+      log.warn(`CAPTCHA present — CapSolver solve attempt ${attempt}/${maxApiTries}`, { sessionUrl });
+      const transferred = await solveCaptchaViaApi({ page, log });
+      if (transferred) {
+        await sleep(800); // let the token settle into the widget
+        await submitSolvedCaptcha(page, log);
+        if (await waitForCaptchaCleared(page, { timeoutMs: 12000 })) {
+          log.info("CAPTCHA cleared (CapSolver)");
+          return true;
+        }
+        log.warn("CAPTCHA still up after submitting CapSolver token; retrying");
+      } else {
+        // Sitekey not on the page yet / solve failed — short wait then retry.
+        await sleep(2000);
+      }
+    }
+    log.warn("CapSolver did not clear the CAPTCHA after retries; falling back to checkbox + manual", {
+      sessionUrl,
+    });
+  }
+
+  // ---- FALLBACK PATH: visible challenge + Browserbase / human solve ----------
+  log.warn("CAPTCHA challenge present — initiating checkbox + waiting to solve", { sessionUrl });
   await clickRecaptchaCheckbox(page, log);
   await (waitForCaptcha?.({ startGraceMs: 2500 }) ?? Promise.resolve(false));
-
-  // Stronger fallback: if a CapSolver key is configured, solve the reCAPTCHA
-  // programmatically (sitekey -> token -> inject). This clears IG's reCAPTCHA
-  // Enterprise even on the free Browserbase plan. Try once now, then a couple
-  // more times in the loop below if the challenge rotates/persists.
-  const apiSolveEnabled = capsolver.isConfigured();
-  const maxApiTries = 3;
-  let apiTries = 0;
-  let lastApiTry = 0;
-  if (apiSolveEnabled && (await captchaPresent(page))) {
-    if (await solveCaptchaViaApi({ page, log })) await sleep(2500);
-    apiTries += 1;
-    lastApiTry = Date.now();
-  }
 
   const deadline = Date.now() + manualTimeoutMs;
   let lastLog = 0;
@@ -508,15 +695,7 @@ async function ensureCaptchaSolved({
       log.info("CAPTCHA cleared");
       return true;
     }
-    // Re-attempt the programmatic solve periodically — the challenge can reset
-    // or rotate, and a fresh token often clears it.
-    if (apiSolveEnabled && apiTries < maxApiTries && Date.now() - lastApiTry > 25000) {
-      if (await solveCaptchaViaApi({ page, log })) await sleep(2500);
-      apiTries += 1;
-      lastApiTry = Date.now();
-    }
-    // Re-click the checkbox periodically in case the first didn't register or
-    // the challenge reset (best-effort; spaced out to avoid fighting the solver).
+    // Periodically re-nudge the checkbox in case the first didn't register.
     if (Date.now() - lastNudge > 18000 && nudges < 4) {
       await clickRecaptchaCheckbox(page, log);
       lastNudge = Date.now();
@@ -526,7 +705,6 @@ async function ensureCaptchaSolved({
       log.warn(`CAPTCHA still up — watch/solve live: ${sessionUrl || "(session URL unavailable)"}`);
       lastLog = Date.now();
     }
-    // Re-run the background barrier in case Browserbase (re)starts a solve.
     await (waitForCaptcha?.({ startGraceMs: 0 }) ?? Promise.resolve(false));
     await sleep(3000);
   }
@@ -554,6 +732,113 @@ async function emailCodeStepPresent(page) {
         /confirmation code/.test(t) ||
         /enter the code we sent/.test(t)
       );
+    })
+    .catch(() => false);
+}
+
+// Enters the email confirmation code. Handles both the common single-input
+// layout and a split one-digit-per-box OTP layout (some IG variants), and
+// clears the field first so a retry doesn't append to a stale value.
+async function enterEmailCode(stagehand, page, code, log) {
+  const single = await firstVisibleSelector(page, [
+    'input[name="email_confirmation_code"]',
+    'input[name="confirmationCode"]',
+    'input[autocomplete="one-time-code"]',
+    'input[aria-label*="confirmation code" i]',
+    'input[type="tel"]',
+  ]);
+  if (single) {
+    try {
+      await page.locator(single).first().fill("");
+      await page.locator(single).first().fill(code);
+      return true;
+    } catch (e) {
+      log?.warn("enterEmailCode single fill failed", e?.message);
+    }
+  }
+
+  // Split OTP layout: one <input maxlength="1"> per digit.
+  const filledSplit = await page
+    .evaluate((value) => {
+      const boxes = Array.from(
+        document.querySelectorAll('input[maxlength="1"], input[inputmode="numeric"]')
+      ).filter((el) => {
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0;
+      });
+      if (boxes.length < value.length) return false;
+      for (let i = 0; i < value.length; i++) {
+        const el = boxes[i];
+        el.focus();
+        el.value = value[i];
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return true;
+    }, code)
+    .catch(() => false);
+  if (filledSplit) return true;
+
+  await stagehand
+    .act(`type "${code}" into the confirmation code field`)
+    .catch((e) => log?.warn("enterEmailCode act fallback failed", e?.message));
+  return false;
+}
+
+// True if IG is showing an inline "that confirmation code is wrong/expired"
+// error. Tells us the entered code was stale/incorrect so we should fetch a
+// FRESHER one (IG invalidates the old code once a newer one exists) rather than
+// re-submitting the same value.
+async function emailCodeRejected(page) {
+  return page
+    .evaluate(() => {
+      const t = ((document.body && document.body.innerText) || "").toLowerCase();
+      return (
+        /invalid or has expired/.test(t) ||
+        /didn'?t match/.test(t) ||
+        /that code (is|was|you)/.test(t) ||
+        /code (is )?(invalid|incorrect|expired)/.test(t) ||
+        /(check|enter).{0,40}code (correctly|again)/.test(t) ||
+        /please try again/.test(t)
+      );
+    })
+    .catch(() => false);
+}
+
+// Best-effort: ask Instagram to send a new confirmation code. Returns whether a
+// resend control was found and clicked.
+async function requestNewEmailCode(page) {
+  return clickButtonByText(page, [
+    "I didn't get the code",
+    "I didn\u2019t get the code",
+    "Resend code",
+    "Resend",
+    "Send a new code",
+    "Get a new code",
+    "Send again",
+  ]);
+}
+
+// True if Instagram rejected the EMAIL ADDRESS itself at the signup form (as
+// opposed to the later confirmation-code step). This is the #1 reason a code
+// "never arrives": IG refuses disposable-domain addresses up front (its domain
+// is on Meta's blocklist), so it never even sends a code. Detecting this lets us
+// swap in a fresh address instead of waiting forever for an email IG won't send.
+async function emailAddressRejected(page) {
+  return page
+    .evaluate(() => {
+      const t = ((document.body && document.body.innerText) || "").toLowerCase();
+      const patterns = [
+        /you can'?t use this email/,
+        /this email( address)? (can'?t|cannot|is not|isn'?t) (be used|available|valid)/,
+        /email address is not available/,
+        /(please )?enter a valid email/,
+        /try (a different|another) email/,
+        /use a (different|valid) email/,
+        /this email (looks invalid|isn'?t valid)/,
+      ];
+      return patterns.some((re) => re.test(t));
     })
     .catch(() => false);
 }
@@ -895,6 +1180,40 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     await sleep(2500);
     await capture("after-submit");
 
+    // If IG rejected the EMAIL ADDRESS up front (disposable domain on Meta's
+    // blocklist), no code will ever be sent — swap in a fresh address and
+    // resubmit instead of marching on to wait for an email that never comes.
+    // Best-effort and bounded; a normal (accepted) email never matches, so the
+    // happy path is unaffected.
+    let emailRotations = 0;
+    while ((await emailAddressRejected(page)) && emailRotations < 2) {
+      emailRotations += 1;
+      log.warn(`Instagram rejected email "${email}" — rotating to a fresh address (${emailRotations}/2)`);
+      await capture(`email-address-rejected-${emailRotations}`);
+      try {
+        const fresh = await generateEmail({ seed: username });
+        if (fresh && fresh !== email) email = fresh;
+      } catch (e) {
+        log.warn("Could not provision a replacement email:", e?.message);
+        break;
+      }
+      await fastFill(stagehand, page, {
+        selectors: ['input[name="emailOrPhone"]', 'input[name="email"]', 'input[type="email"]'],
+        value: email,
+        describe: "email field",
+        log,
+      });
+      // DOB can clear when the form re-renders; re-fill if it's showing again.
+      if (await birthdayPresent(page)) {
+        await fillBirthday(stagehand, page, dob, log);
+        await waitForBirthdaySet(page, dob, { timeoutMs: 4000 });
+      }
+      await sleep(300);
+      await submit();
+      await sleep(2500);
+      await capture(`after-email-rotation-${emailRotations}`);
+    }
+
     // If IG bounced us back with the birthday still showing (empty-DOB
     // validation error, or it simply didn't take the first time), fill it and
     // resubmit before moving on. This is the exact "submit ignores the birthday,
@@ -954,9 +1273,10 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     // Email confirmation code step. Detect it from the DOM (an actual code input
     // or instruction text) — NOT an LLM extract(), which previously false-
     // positived on the CAPTCHA modal and made us wait for an email IG never sent.
-    // Poll briefly since the page transitions async after the prior step.
+    // Poll a bit longer since the page transitions async after the prior step /
+    // CAPTCHA clears (a too-short window made us skip a step IG actually showed).
     let needsEmail = false;
-    for (let i = 0; i < 6 && !needsEmail; i++) {
+    for (let i = 0; i < 12 && !needsEmail; i++) {
       needsEmail = await emailCodeStepPresent(page);
       if (!needsEmail) await sleep(1000);
     }
@@ -964,24 +1284,89 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     if (needsEmail) {
       log.info("Email confirmation required");
       await capture("email-code-requested");
-      const code = await waitForEmailCode({ influencerId, to: email });
-      log.info("Email code received", code);
-      await fastFill(stagehand, page, {
-        selectors: ['input[name="email_confirmation_code"]', 'input[name="confirmationCode"]', 'input[autocomplete="one-time-code"]', 'input[type="tel"]'],
-        value: code,
-        describe: "confirmation code field",
-        log,
-      });
-      await sleep(600);
-      await pressButton(stagehand, page, {
-        texts: ["Next", "Confirm"],
-        cssFallback: ['button[type="submit"]'],
-        act: "click next or confirm to submit the email code",
-        log,
-      });
-      await sleep(2500);
-      await settleCaptcha();
-      await capture("after-email-code");
+
+      const emailStepAt = Date.now();
+      // The first valid code may have been sent at any point during this signup
+      // (IG sometimes sends it before a long CAPTCHA), so look back a few minutes
+      // for it. After a rejection we require a code strictly newer than the one
+      // we just tried, so a superseded/expired code is never reused.
+      let minReceivedAt = emailStepAt - 5 * 60 * 1000;
+      let confirmed = false;
+      let lastErr = null;
+
+      for (let attempt = 1; attempt <= 3 && !confirmed; attempt++) {
+        let hit;
+        try {
+          hit = await waitForEmailCode({
+            influencerId,
+            to: email,
+            receivedAfter: minReceivedAt,
+            timeoutMs: attempt === 1 ? 150000 : 90000,
+          });
+        } catch (err) {
+          lastErr = err;
+          log.warn(`No email code retrieved (attempt ${attempt}/3)`, err?.message);
+          break;
+        }
+
+        const { code, receivedAt } = hit;
+        log.info(`Email code received (attempt ${attempt}/3)`, code);
+        await enterEmailCode(stagehand, page, code, log);
+        await sleep(500);
+        await pressButton(stagehand, page, {
+          texts: ["Continue", "Next", "Confirm", "Submit"],
+          cssFallback: ['button[type="submit"]'],
+          act: "click the button to submit the email confirmation code",
+          log,
+        });
+        await sleep(2000);
+        await settleCaptcha();
+
+        // Give the page a few seconds to navigate off the email step before
+        // concluding anything (avoids a false "rejected" on a slow transition).
+        for (let i = 0; i < 6 && !confirmed; i++) {
+          if (!(await emailCodeStepPresent(page))) confirmed = true;
+          else await sleep(1000);
+        }
+        if (confirmed) break;
+
+        // Still on the email step. If IG shows an explicit invalid/expired
+        // error, the code is dead — only a NEWER one can work, so bump the
+        // cutoff and ask IG to resend. If there's no error, the submit likely
+        // didn't take; retry the same (still-valid) code without bumping.
+        const rejected = await emailCodeRejected(page);
+        log.warn(`Email code not accepted (attempt ${attempt}/3)`, { rejected });
+        await capture(`email-code-rejected-${attempt}`);
+        if (rejected) {
+          minReceivedAt = (receivedAt || Date.now()) + 1000;
+          const resent = await requestNewEmailCode(page);
+          if (resent) {
+            log.info("Requested a fresh confirmation code (resend)");
+            await sleep(4000);
+            await settleCaptcha();
+          }
+        }
+      }
+
+      await capture(confirmed ? "after-email-code" : "email-code-not-accepted");
+      if (!confirmed) {
+        const reason = lastErr
+          ? `no code received (${lastErr.message})`
+          : "Instagram kept rejecting the code as invalid/expired";
+        // A timeout with a disposable provider almost always means IG delivered
+        // nothing because the domain is on Meta's blocklist — point at the fix.
+        const hint =
+          lastErr && config.verification.emailProvider === "maildotm"
+            ? " Likely cause: Instagram blocks disposable-mail domains, so it never sent the code. Switch to a real inbox (EMAIL_PROVIDER=imap with EMAIL_ALIAS_BASE/EMAIL_CATCHALL_DOMAIN) and verify delivery with `npm run probe:email`."
+            : "";
+        return {
+          loggedIn: false,
+          blockedByEmail: true,
+          email,
+          sessionUrl,
+          note: `Stuck on Instagram's email confirmation: ${reason}.${hint} Watch/solve live at ${sessionUrl || "the Browserbase session"}, or submit a code manually from the dashboard.`,
+        };
+      }
     } else {
       log.info("No email confirmation step detected");
     }
@@ -1026,6 +1411,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     birthday: `${dob.year}-${String(dob.monthNumber).padStart(2, "0")}-${String(dob.day).padStart(2, "0")}`,
     loggedIn: result.loggedIn,
     blockedByCaptcha: Boolean(result.blockedByCaptcha),
+    blockedByEmail: Boolean(result.blockedByEmail),
     note: result.note,
     session: {},
   };

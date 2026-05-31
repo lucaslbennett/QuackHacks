@@ -71,6 +71,14 @@ export const config = {
     // "verified" = advanced stealth (real device fingerprint). ENTERPRISE plan
     // only — fails with 403 elsewhere — so default OFF and opt in when eligible.
     verified: bool(process.env.BROWSERBASE_VERIFIED, false),
+    // Custom EXTERNAL proxy for the browser session. The point of this is to make
+    // the session egress from the SAME IP that CapSolver solves from (set
+    // CAPSOLVER_PROXY to the same value): reCAPTCHA Enterprise rejects a token
+    // whose solve IP/fingerprint doesn't match the page's, so matching them is
+    // what lets an injected token actually clear IG's challenge.
+    proxyServer: process.env.BROWSERBASE_PROXY_SERVER || "",
+    proxyUsername: process.env.BROWSERBASE_PROXY_USERNAME || "",
+    proxyPassword: process.env.BROWSERBASE_PROXY_PASSWORD || "",
   },
 
   // Third-party CAPTCHA solver (CapSolver — https://capsolver.com). When an
@@ -85,13 +93,79 @@ export const config = {
     // How long to poll a created task before giving up, and how often.
     pollIntervalMs: parseInt(process.env.CAPSOLVER_POLL_MS || "3000", 10),
     timeoutMs: parseInt(process.env.CAPSOLVER_TIMEOUT_MS || "120000", 10),
+    // Instagram serves reCAPTCHA *Enterprise* (sitekey 6LdktRgn…). A token solved
+    // with the standard v2 task type is REJECTED by IG, so we must use CapSolver's
+    // Enterprise task. DOM-based enterprise detection is unreliable (the key and
+    // the "/enterprise/" signal can live in different/cross-origin frames), so
+    // default this ON to force the Enterprise task type. Set to false only if you
+    // ever point this flow at a genuinely non-enterprise reCAPTCHA.
+    forceEnterprise: bool(process.env.CAPSOLVER_FORCE_ENTERPRISE, true),
+    // Proxy CapSolver should solve THROUGH (format: "scheme:host:port:user:pass"
+    // or "host:port:user:pass"). reCAPTCHA Enterprise binds the token to the
+    // solver's IP/fingerprint, so a proxyless (datacenter-IP) token is rejected
+    // when submitted from the Browserbase session's IP. Set this to the SAME
+    // proxy as BROWSERBASE_PROXY_SERVER so the solve IP matches the page IP — that
+    // is what makes an Enterprise token actually clear the challenge. When empty,
+    // CapSolver solves proxyless (works for non-enterprise, often rejected by IG).
+    proxy: process.env.CAPSOLVER_PROXY || "",
   },
 
   verification: {
-    // Pluggable email provider. "mailosaur" | "manual"
-    emailProvider: process.env.EMAIL_PROVIDER || "manual",
+    // Pluggable email provider. "imap" | "maildotm" | "mailosaur" | "manual"
+    //
+    // "imap" (MOST RELIABLE): polls a REAL mailbox over IMAP (e.g. a Gmail with
+    // an app password, or any catch-all domain inbox). Because the address is a
+    // real, reputable one, Instagram actually DELIVERS the verification email to
+    // it — unlike disposable domains, which Meta blocks. Use EMAIL_ALIAS_BASE
+    // (e.g. you@gmail.com -> you+ig123@gmail.com) or EMAIL_CATCHALL_DOMAIN
+    // (e.g. ig123@yourdomain.com) so every signup gets a fresh-looking address
+    // that still lands in the one mailbox we read. THIS is the way to guarantee
+    // the inbox receives the code.
+    //
+    // "maildotm" (mail.tm, zero-config default): provisions a disposable inbox
+    // and polls it. No API key, but Meta blocks most disposable domains, so the
+    // email frequently never arrives — best for quick local testing only.
+    // "mailosaur" does NOT work for IG (it policy-blocks third-party signup
+    // emails). "manual" generates a placeholder address for dashboard entry.
+    emailProvider: process.env.EMAIL_PROVIDER || "maildotm",
     emailApiKey: process.env.EMAIL_API_KEY || "",
     mailosaurServerId: process.env.MAILOSAUR_SERVER_ID || "",
+    // Disposable-mail (mail.tm-compatible) API bases, in priority order. Both
+    // mail.tm and its identical-API sibling mail.gw are tried so a single
+    // flagged/dead endpoint or domain doesn't sink provisioning. Comma-separated
+    // override via MAILTM_API_BASE (keeps backwards compatibility with a single
+    // value).
+    mailtmApiBases: (process.env.MAILTM_API_BASE || "https://api.mail.tm,https://api.mail.gw")
+      .split(",")
+      .map((s) => s.trim().replace(/\/+$/, ""))
+      .filter(Boolean),
+    // Optionally pin/avoid specific disposable domains (comma-separated). PIN
+    // wins; otherwise the first active public domain not in the skip list is
+    // used. Lets you switch off a domain you've seen IG reject.
+    mailtmPreferredDomain: (process.env.MAILTM_PREFERRED_DOMAIN || "").trim().toLowerCase(),
+    mailtmSkipDomains: (process.env.MAILTM_SKIP_DOMAINS || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+    // IMAP real-inbox provider config. host/user/pass are required for "imap".
+    imap: {
+      host: process.env.IMAP_HOST || "",
+      port: parseInt(process.env.IMAP_PORT || "993", 10),
+      secure: bool(process.env.IMAP_SECURE, true),
+      user: process.env.IMAP_USER || "",
+      pass: process.env.IMAP_PASS || "",
+      mailbox: process.env.IMAP_MAILBOX || "INBOX",
+      // The address every alias delivers to (defaults to IMAP_USER). With Gmail
+      // this is the bare account; aliases are user+slug@domain (or dotted).
+      aliasBase: (process.env.EMAIL_ALIAS_BASE || process.env.IMAP_USER || "").trim().toLowerCase(),
+      // "plus" -> you+slug@dom · "dot" -> Gmail dot-variants · "none" -> use the
+      // base address verbatim every time (only safe for one signup at a time).
+      aliasMode: (process.env.EMAIL_ALIAS_MODE || "plus").trim().toLowerCase(),
+      // A catch-all domain you control (every <anything>@domain reaches the IMAP
+      // box). When set, addresses are <slug>@<domain> — unlimited, real-looking,
+      // and the most IG-friendly option.
+      catchAllDomain: (process.env.EMAIL_CATCHALL_DOMAIN || "").trim().toLowerCase(),
+    },
     // Pluggable SMS provider. "twilio" | "sms-activate" | "manual"
     smsProvider: process.env.SMS_PROVIDER || "manual",
     smsApiKey: process.env.SMS_API_KEY || "",

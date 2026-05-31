@@ -137,12 +137,18 @@ router.post("/smoke/spawn-user", async (req, res) => {
       .json({ ok: false, error: "BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required" });
   }
 
+  let email;
+  try {
+    email = req.body.email || (await generateEmail({ seed: req.body.name || "qa" }));
+  } catch (err) {
+    return res.status(502).json({ ok: false, error: `email inbox provisioning failed: ${err.message}` });
+  }
   const inputs = {
     name: req.body.name || "Test Creator",
     niche: req.body.niche || "fashion",
     questionnaire: req.body.questionnaire || {},
     sources: req.body.sources || [],
-    email: req.body.email || generateEmail({ seed: req.body.name || "qa" }),
+    email,
   };
 
   const runId = randomUUID();

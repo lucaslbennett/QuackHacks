@@ -12,6 +12,7 @@
     "web:dev": "npm --prefix web run dev",
     "test:signup": "node server/scripts/signupTest.js",
     "test:signup:loop": "node server/scripts/signupTest.js --runs 5 --all",
+    "probe:email": "node server/scripts/probeEmail.js",
     "probe:mailosaur": "node server/scripts/probeMailosaur.js",
     "probe:birthday": "node server/scripts/probeBirthday.js",
     "probe:capsolver": "node server/scripts/probeCapsolver.js"
@@ -27,6 +28,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "imapflow": "^1.3.4",
     "node-cron": "^3.0.3",
     "pg": "^8.13.1",
     "zod": "^3.23.8"
