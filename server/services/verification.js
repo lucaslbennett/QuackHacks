@@ -2,8 +2,16 @@ import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { sleep } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
+import {
+  pickIdentity,
+  rememberAddressIdentity,
+  markIdentityBurned,
+  identityStatus,
+} from "./emailIdentity.js";
 
 const log = createLogger("verify");
+
+export { markIdentityBurned, identityStatus };
 
 // In-memory store for manual code entry from the dashboard.
 // influencerId -> { email?: string, sms?: string }
@@ -42,19 +50,70 @@ function extractCode(text) {
 
 // --- Address generation ------------------------------------------------------
 
-// Per-process monotonic counter so two slugs minted in the same millisecond
+// Per-process monotonic counter so two addresses minted in the same millisecond
 // (e.g. a tight account-generation loop) still differ.
 let slugSeq = 0;
 
-// Builds a GUARANTEED-UNIQUE address slug. A new account must get a brand-new
-// email every time: Instagram ties each address to a signup the instant it's
-// submitted, so reusing one (even from an abandoned attempt) trips "email
-// already in use" / "this email can't be used". The suffix combines a
-// millisecond timestamp + a per-process sequence counter + randomness, so no
-// two calls — even with an identical seed or within the same millisecond — ever
-// collide. The human-readable prefix is capped short so the unique suffix is
-// never lost to the 24-char truncation the IMAP/mail.tm helpers apply to the
-// local part (which strips the dot, leaving prefix+suffix).
+// A short, unique numeric tail (e.g. "90187"). The monotonic seq guarantees two
+// same-millisecond calls differ; the ms + random components separate distinct
+// runs. We render it as PLAIN DIGITS on purpose: real people's auto-suggested
+// emails look like "name + numbers" (Gmail proposes exactly these), whereas an
+// alnum slug like "1uy60swn" reads as a disposable/bot address — the kind of
+// pattern Instagram's signup anti-abuse distrusts.
+function uniqueNumericTail() {
+  const ms = Date.now() % 10000; // 4 digits — separates distinct runs
+  const seq = slugSeq++ % 100; // 2 digits — monotonic within a process
+  const r = Math.floor(Math.random() * 10); // 1 digit — extra entropy
+  return `${String(ms).padStart(4, "0")}${String(seq).padStart(2, "0")}${r}`;
+}
+
+// Splits a handle/display name into first/last-ish alpha tokens. Handles
+// "Marcus Dempsey", "marcus_dempsey", "marcusDempsey" and bare "marcusdempt".
+function nameParts(seed) {
+  let tokens = String(seed || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2") // camelCase -> spaced
+    .split(/[^A-Za-z]+/)
+    .filter(Boolean)
+    .map((t) => t.toLowerCase().slice(0, 14));
+  if (!tokens.length) tokens = ["alex"];
+  const first = tokens[0];
+  const last = tokens.length > 1 ? tokens[tokens.length - 1] : "";
+  return { first, last };
+}
+
+// Builds a human-looking, GUARANTEED-UNIQUE email local part from a persona
+// name: "marcus.dempsey90187", "marcusdempsey4471", "m.dempsey88123". The numeric
+// tail makes every address distinct (so nothing is ever reused — IG binds an
+// address to a signup the instant it's submitted), while the name-based prefix
+// reads like a normal personal address instead of an automation string.
+function humanLocalPart(seed) {
+  const { first, last } = nameParts(seed);
+  const tail = uniqueNumericTail();
+  let base;
+  if (last) {
+    const sep = ["", ".", "_", ""][Math.floor(Math.random() * 4)];
+    const patterns = [
+      `${first}${sep}${last}`,
+      `${first[0]}${sep}${last}`,
+      `${first}${sep}${last[0]}`,
+    ];
+    base = patterns[Math.floor(Math.random() * patterns.length)];
+  } else {
+    base = first;
+  }
+  base =
+    base
+      .replace(/[^a-z0-9._]/g, "")
+      .replace(/[._]{2,}/g, ".")
+      .replace(/^[._]+|[._]+$/g, "")
+      .slice(0, 20) || "alex";
+  return `${base}${tail}`;
+}
+
+// Builds a GUARANTEED-UNIQUE slug for the disposable-mail providers (mail.tm /
+// mailosaur), where a real-looking name buys nothing. Timestamp + per-process
+// seq + randomness means no two calls ever collide; the short prefix survives
+// the 24-char local-part truncation those helpers apply.
 function randomSlug(seed) {
   const clean = String(seed || "creator")
     .toLowerCase()
@@ -67,29 +126,28 @@ function randomSlug(seed) {
   return `${clean}.${unique}`;
 }
 
-// Returns a fresh, inbox-backed email address for a new account. ASYNC because
-// the default provider (mail.tm) has to provision the inbox up front so it can
-// receive Instagram's email.
+// Returns a fresh, inbox-backed email address for a new account.
 //
-// - "maildotm" (default): creates a REAL disposable inbox via mail.tm and
-//   returns its address. waitForEmailCode() later logs in and reads the IG code
-//   from it. No API key required.
-// - "mailosaur": returns `<slug>@<serverId>.mailosaur.net`. NOTE: Mailosaur
-//   policy-blocks third-party signup emails, so IG's code never lands here —
-//   kept only for backwards compatibility.
-// - otherwise ("manual"): a placeholder example.com address; the code must be
-//   entered by hand from the dashboard.
+// - "imap": rotates distinct Fastmail aliases (EMAIL_ALIAS_BASES) — no DNS. Each
+//   signup uses base+tag@fastmail.com; burned bases are skipped automatically.
+// - "maildotm": creates a REAL disposable inbox via mail.tm (ASYNC — it has to
+//   provision the inbox up front). No API key. NOTE: Meta blocks most disposable
+//   domains, so IG's code often never lands.
+// - "mailosaur": kept for backwards compatibility; IG policy-blocks its codes.
+// - otherwise ("manual"): a placeholder example.com address; enter the code by
+//   hand from the dashboard.
 export async function generateEmail({ seed } = {}) {
   const { emailProvider, mailosaurServerId } = config.verification;
-  const slug = randomSlug(seed);
 
   if (emailProvider === "imap") {
-    // Real mailbox: just mint a fresh alias that routes to it. No provisioning
-    // call needed — the inbox already exists and IG will deliver to it.
-    const address = imapAliasFor(slug);
-    log.info("Using IMAP inbox alias", address);
+    const identity = pickIdentity();
+    const address = imapAddressFor(seed, identity);
+    rememberAddressIdentity(address, identity);
+    log.info("Using IMAP inbox alias", address, `(${identity.id})`);
     return address;
   }
+
+  const slug = randomSlug(seed);
   if (emailProvider === "maildotm") {
     try {
       return await provisionMailtmInbox(slug);
@@ -314,34 +372,43 @@ async function fetchEmailCodeMailtm({ to, receivedAfter }) {
 // DELIVERS the code to it instead of dropping it like it does for disposable
 // domains. We connect once per wait, then re-search on an interval.
 
-// Builds a fresh, IG-friendly address that still lands in the one mailbox we
-// read. Priority: catch-all domain (best: unlimited <slug>@yourdomain), then
-// alias of the base account (plus/dot/none).
-function imapAliasFor(slug) {
-  const { catchAllDomain, aliasBase, aliasMode } = config.verification.imap;
-  const clean = String(slug).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24) || `u${Date.now().toString(36)}`;
-  if (catchAllDomain) return `${clean}@${catchAllDomain}`;
+// Builds a fresh, IG-friendly address that lands in the one mailbox we read.
+// Priority: a catch-all domain (BEST — every <human-name>@yourdomain is a real,
+// distinct address with NO shared canonical base for Meta to correlate), then an
+// alias of the base account.
+//
+// IMPORTANT: plus-addressing (you+tag@) and Gmail dotted aliases are CANONICALIZED
+// by Meta back to the bare account, so every account collapses into one identity
+// and gets integrity-flagged (codes rejected as "invalid/expired"). They're kept
+// only as a last resort — set EMAIL_CATCHALL_DOMAIN to avoid them entirely.
+function imapAddressFor(seed, identity) {
+  const human = humanLocalPart(seed);
+  const aliasMode = config.verification.imap.aliasMode;
+
+  if (identity?.type === "catchall") {
+    return `${human}@${identity.domain}`;
+  }
+
+  const aliasBase = identity?.aliasBase || config.verification.imap.aliasBase;
   if (!aliasBase || !aliasBase.includes("@")) {
-    throw new Error("EMAIL_PROVIDER=imap needs EMAIL_CATCHALL_DOMAIN or a full EMAIL_ALIAS_BASE (e.g. you@gmail.com)");
+    throw new Error("EMAIL_PROVIDER=imap needs EMAIL_CATCHALL_DOMAIN or EMAIL_ALIAS_BASES");
   }
   const [local, domain] = aliasBase.split("@");
   if (aliasMode === "none") return aliasBase;
-  if (aliasMode === "dot") {
-    // Gmail ignores dots in the local part, so a dotted variant is a distinct
-    // address to IG but the same inbox to us. Derive dot positions from the slug
-    // so different signups get different variants.
+
+  const tag = human.replace(/[^a-z0-9]/g, "").slice(0, 24) || `u${Date.now().toString(36)}`;
+  if (identity?.type === "dot" || aliasMode === "dot") {
     const chars = local.split("");
-    let seed = 0;
-    for (const c of clean) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+    let s = 0;
+    for (const c of tag) s = (s * 31 + c.charCodeAt(0)) >>> 0;
     const out = [chars[0]];
     for (let i = 1; i < chars.length; i++) {
-      if ((seed >> (i % 31)) & 1) out.push(".");
+      if ((s >> (i % 31)) & 1) out.push(".");
       out.push(chars[i]);
     }
     return `${out.join("")}@${domain}`;
   }
-  // Default: plus-addressing — unlimited and unambiguous.
-  return `${local}+${clean}@${domain}`;
+  return `${local}+${tag}@${domain}`;
 }
 
 // Soft-decodes quoted-printable so a code split across a line break (e.g.

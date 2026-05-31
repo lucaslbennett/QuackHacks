@@ -18,6 +18,7 @@ import {
 import { replanInfluencer, ensureAutopilotScheduleFor } from "../jobs/postingSchedule.js";
 import { config } from "../config.js";
 import { computeLiveProfile } from "../lib/liveProfile.js";
+import { isConfigured as stagehandConfigured } from "../services/browser/stagehand.js";
 import { requireAuth } from "../lib/auth.js";
 import { createLogger } from "../lib/logger.js";
 
@@ -445,6 +446,143 @@ router.post(
       persona: restored,
     });
     res.json({ ok: true, influencer });
+  })
+);
+
+// Shallow-merge the refined persona over the existing one so any field the model
+// didn't return is preserved. The known nested objects are merged one level deep
+// so a partial nested update doesn't wipe sibling keys.
+function applyRefinedPersona(existing, refined) {
+  const base = existing && typeof existing === "object" ? existing : {};
+  const next = refined && typeof refined === "object" ? refined : {};
+  const incoming = {
+    ...base,
+    ...next,
+    visualStyle: { ...(base.visualStyle || {}), ...(next.visualStyle || {}) },
+    voiceStyle: { ...(base.voiceStyle || {}), ...(next.voiceStyle || {}) },
+    voiceCasting: { ...(base.voiceCasting || {}), ...(next.voiceCasting || {}) },
+  };
+  const merged = mergePersonaUpdate(base, incoming);
+  if (!merged.personaDefaults) merged.personaDefaults = snapshotPersonaDefaults(base);
+  return merged;
+}
+
+// Queues a Browser Use job to push the refined profile (name/bio/photo) to the
+// live Instagram account — the profile edit Postiz can't do. Best-effort: returns
+// a reason (not an error) when it isn't possible so the refine still succeeds.
+async function maybeQueueIgProfileSync(influencer, persona, imageUrl) {
+  if (!stagehandConfigured()) {
+    return {
+      queued: false,
+      reason: "Browser automation isn't configured (set BROWSER_USE_API_KEY).",
+    };
+  }
+  const account = await repo.igAccounts.forInfluencer(influencer.id);
+  if (!account || account.status !== "active" || !account.password_enc) {
+    return {
+      queued: false,
+      reason:
+        "No editable Instagram login on file. Live profile sync needs an account " +
+        "created via the auto-spawn flow; Postiz-linked accounts can't be edited " +
+        "through the API.",
+    };
+  }
+  await repo.jobs.enqueue({
+    influencerId: influencer.id,
+    type: "update_ig_profile",
+    payload: {
+      name: persona.displayName || influencer.name,
+      bio: persona.bio || null,
+      profileImageUrl: imageUrl || influencer.image_url || null,
+    },
+  });
+  return { queued: true, reason: null };
+}
+
+// Prompt-based, refinable "Modify influencer". Takes a free-form instruction
+// ("make her style streetwear", "warmer bio", "change niche to skincare"),
+// rewrites the persona with Gemini, optionally re-renders the portrait, and can
+// push the new profile to the live Instagram account. Designed to be called
+// repeatedly to keep iterating on the same character.
+router.post(
+  "/:id/refine",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
+
+    const instruction = String(req.body.instruction || "").trim();
+    if (!instruction) {
+      return res.status(400).json({ ok: false, error: "instruction is required" });
+    }
+    if (!gemini.isConfigured()) {
+      return res
+        .status(503)
+        .json({ ok: false, error: "AI refinement is not configured (GEMINI_API_KEY)" });
+    }
+
+    const existing =
+      owned.persona && typeof owned.persona === "object" ? owned.persona : {};
+    const refined = await gemini.refinePersona({ persona: existing, instruction });
+    const mergedPersona = applyRefinedPersona(existing, refined.persona);
+
+    const name = String(mergedPersona.displayName || owned.name || "").trim() || owned.name;
+    const handle =
+      (mergedPersona.handleSuggestions?.[0] || owned.handle || "").trim() || null;
+
+    // Decide whether to re-render the portrait. The model flags look changes;
+    // the client can also force it. Keep the same face unless the client opted
+    // out OR the model judged this a different-looking person.
+    const forceImage = req.body.regenerateImage === true;
+    const wantImage = forceImage || refined.looksChanged === true;
+    const keepLikeness = req.body.keepLikeness !== false && refined.likeness !== "new";
+
+    let newImageUrl = null;
+    let imageError = null;
+    if (wantImage) {
+      try {
+        const img = await gemini.generateInfluencerImage({
+          prompt:
+            refined.imagePrompt ||
+            mergedPersona.imagePrompt ||
+            [mergedPersona.appearance, mergedPersona.aesthetic].filter(Boolean).join(". ") ||
+            name,
+          influencerId: owned.id,
+          label: "portrait",
+          referenceImage: keepLikeness ? owned.image_url || null : null,
+        });
+        newImageUrl = img.url;
+      } catch (err) {
+        imageError = err.message;
+        log.warn(`portrait regen failed for ${owned.id}:`, err.message);
+      }
+    }
+
+    const fields = {
+      name,
+      niche: mergedPersona.niche || owned.niche,
+      handle,
+      persona: mergedPersona,
+    };
+    if (newImageUrl) fields.image_url = newImageUrl;
+    const influencer = await repo.influencers.update(owned.id, fields);
+
+    // Optionally push the refreshed profile to the live Instagram account.
+    let igSync = { queued: false, reason: null };
+    if (req.body.applyToInstagram) {
+      igSync = await maybeQueueIgProfileSync(influencer, mergedPersona, newImageUrl);
+    }
+
+    res.json({
+      ok: true,
+      influencer,
+      summary: refined.summary,
+      changedFields: refined.changedFields,
+      looksChanged: refined.looksChanged,
+      imageChanged: Boolean(newImageUrl),
+      imageError,
+      igSync,
+    });
   })
 );
 

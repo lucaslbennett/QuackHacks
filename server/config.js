@@ -171,14 +171,8 @@ export const config = {
   verification: {
     // Pluggable email provider. "imap" | "maildotm" | "mailosaur" | "manual"
     //
-    // "imap" (MOST RELIABLE): polls a REAL mailbox over IMAP (e.g. a Gmail with
-    // an app password, or any catch-all domain inbox). Because the address is a
-    // real, reputable one, Instagram actually DELIVERS the verification email to
-    // it — unlike disposable domains, which Meta blocks. Use EMAIL_ALIAS_BASE
-    // (e.g. you@gmail.com -> you+ig123@gmail.com) or EMAIL_CATCHALL_DOMAIN
-    // (e.g. ig123@yourdomain.com) so every signup gets a fresh-looking address
-    // that still lands in the one mailbox we read. THIS is the way to guarantee
-    // the inbox receives the code.
+    // "imap": polls Fastmail (or any IMAP inbox). Rotate EMAIL_ALIAS_BASES — distinct
+    // @fastmail.com aliases (no DNS). Optional EMAIL_CATCHALL_DOMAIN for custom domains.
     //
     // "maildotm" (mail.tm, zero-config default): provisions a disposable inbox
     // and polls it. No API key, but Meta blocks most disposable domains, so the
@@ -213,15 +207,36 @@ export const config = {
       user: process.env.IMAP_USER || "",
       pass: process.env.IMAP_PASS || "",
       mailbox: process.env.IMAP_MAILBOX || "INBOX",
-      // The address every alias delivers to (defaults to IMAP_USER). With Gmail
-      // this is the bare account; aliases are user+slug@domain (or dotted).
+      // Legacy single alias base (used when EMAIL_ALIAS_BASES is empty).
       aliasBase: (process.env.EMAIL_ALIAS_BASE || process.env.IMAP_USER || "").trim().toLowerCase(),
+      // Pool of DISTINCT @fastmail.com (or other) bases to rotate across. Each
+      // signup picks the next non-burned base and mints base+tag@domain so Meta
+      // sees a fresh canonical identity. Comma-separated.
+      aliasBasePool: (process.env.EMAIL_ALIAS_BASES || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.includes("@")),
+      // Identities to never use (burned by Instagram). Comma-separated emails or
+      // identity ids (e.g. plus:lucasfasto@fastmail.com). Persisted burns in
+      // media/email_identity_state.json are merged with this list on startup.
+      excludeIdentityIds: [
+        ...(process.env.EMAIL_EXCLUDE_BASES || "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+          .flatMap((s) => (s.includes("@") ? [`plus:${s}`, `direct:${s}`, s] : [s])),
+        ...(process.env.EMAIL_BURNED_BASES || "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+          .flatMap((s) => (s.includes("@") ? [`plus:${s}`, `direct:${s}`, s] : [s])),
+      ],
       // "plus" -> you+slug@dom · "dot" -> Gmail dot-variants · "none" -> use the
       // base address verbatim every time (only safe for one signup at a time).
       aliasMode: (process.env.EMAIL_ALIAS_MODE || "plus").trim().toLowerCase(),
       // A catch-all domain you control (every <anything>@domain reaches the IMAP
-      // box). When set, addresses are <slug>@<domain> — unlimited, real-looking,
-      // and the most IG-friendly option.
+      // box). When set, addresses are <name123>@<domain> — unlimited, real-looking,
+      // and the most IG-friendly option (no shared canonical base).
       catchAllDomain: (process.env.EMAIL_CATCHALL_DOMAIN || "").trim().toLowerCase(),
     },
     // Pluggable SMS provider. "twilio" | "sms-activate" | "manual"

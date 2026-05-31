@@ -32,6 +32,7 @@ import {
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
 import InfluencerCustomizeTab from "./InfluencerCustomizeTab";
+import RefineInfluencerModal from "./RefineInfluencerModal";
 import BuildAccountModal from "./BuildAccountModal";
 import PostingScheduleModal from "./PostingScheduleModal";
 import type { PostingScheduleSummary } from "../lib/influencers";
@@ -87,6 +88,8 @@ export default function InfluencerPanel({
   const [unlinking, setUnlinking] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Prompt-based "Modify influencer" modal.
+  const [modifying, setModifying] = useState(false);
 
   const persona = influencer.persona || {};
   const name = persona.displayName || influencer.name;
@@ -232,6 +235,15 @@ export default function InfluencerPanel({
               {persona.bio}
             </p>
           )}
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setModifying(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#5b73d6] px-4 py-2 text-[13px] font-medium text-white transition hover:bg-[#4a61c2]"
+            >
+              <span aria-hidden>✦</span> Modify influencer
+            </button>
+          </div>
         </div>
       </section>
 
@@ -356,6 +368,7 @@ export default function InfluencerPanel({
         <InfluencerCustomizeTab
           influencer={influencer}
           onSaved={(inf) => setInfluencer(inf)}
+          onModify={() => setModifying(true)}
         />
       )}
       {tab === "analytics" && (
@@ -399,6 +412,15 @@ export default function InfluencerPanel({
           </button>
         )}
       </section>
+
+      {modifying && (
+        <RefineInfluencerModal
+          influencer={influencer}
+          canSyncInstagram={account?.status === "active"}
+          onClose={() => setModifying(false)}
+          onUpdated={(inf) => setInfluencer(inf)}
+        />
+      )}
     </div>
   );
 }

@@ -249,6 +249,62 @@ export async function updateInfluencerPersona(
   return data.influencer as Influencer;
 }
 
+// The outcome of one prompt-based refinement pass.
+export interface RefineResult {
+  influencer: Influencer;
+  // Plain-English summary of what the AI changed.
+  summary: string;
+  // Top-level persona keys that were modified.
+  changedFields: string[];
+  // Whether the look (appearance/outfits/portrait) changed.
+  looksChanged: boolean;
+  // Whether a new portrait was rendered (and image_url updated).
+  imageChanged: boolean;
+  imageError?: string | null;
+  // Result of the optional live-Instagram profile sync (Browser Use).
+  igSync: { queued: boolean; reason: string | null };
+}
+
+export interface RefineInput {
+  // Free-form natural-language instruction describing the change.
+  instruction: string;
+  // Keep the same face when re-rendering (default true). Turn off for a full
+  // look change (e.g. different gender/age/ethnicity).
+  keepLikeness?: boolean;
+  // Force a fresh portrait even when the look didn't obviously change.
+  regenerateImage?: boolean;
+  // Also push the refreshed name/bio/photo to the live Instagram account.
+  applyToInstagram?: boolean;
+}
+
+// Auth required: prompt-based, refinable "Modify influencer". Rewrites the
+// persona from a free-form instruction, optionally re-renders the portrait, and
+// can sync the profile to the live Instagram account. Call repeatedly to keep
+// iterating on the same character.
+export async function refineInfluencer(
+  influencerId: string,
+  input: RefineInput,
+): Promise<RefineResult> {
+  const res = await fetch(`/api/influencers/${influencerId}/refine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Refine failed (${res.status})`);
+  }
+  return {
+    influencer: data.influencer as Influencer,
+    summary: data.summary ?? "",
+    changedFields: Array.isArray(data.changedFields) ? data.changedFields : [],
+    looksChanged: Boolean(data.looksChanged),
+    imageChanged: Boolean(data.imageChanged),
+    imageError: data.imageError ?? null,
+    igSync: data.igSync ?? { queued: false, reason: null },
+  };
+}
+
 // Auth required: restore persona AI fields to launch defaults (or regenerate).
 export async function resetInfluencerPersona(influencerId: string): Promise<Influencer> {
   const res = await fetch(`/api/influencers/${influencerId}/persona/reset`, {

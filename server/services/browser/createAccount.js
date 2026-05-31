@@ -5,7 +5,7 @@ import { config } from "../../config.js";
 import { withStagehand } from "./stagehand.js";
 import * as capsolver from "./capsolver.js";
 import * as gemini from "../gemini.js";
-import { waitForEmailCode, generateEmail } from "../verification.js";
+import { waitForEmailCode, generateEmail, markIdentityBurned } from "../verification.js";
 import { freshUsername, randomPassword, pickBirthday } from "../identity.js";
 import { sleep, randomInt, pick } from "../../lib/util.js";
 import { createLogger } from "../../lib/logger.js";
@@ -2325,6 +2325,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     while ((await emailAddressRejected(page)) && emailRotations < 2) {
       emailRotations += 1;
       log.warn(`Instagram rejected email "${email}" — rotating to a fresh address (${emailRotations}/2)`);
+      markIdentityBurned(email, { reason: "address_rejected" });
       await capture(`email-address-rejected-${emailRotations}`);
       try {
         const fresh = await generateEmail({ seed: username });
@@ -2570,6 +2571,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
           integrityRejections += 1;
           if (integrityRejections >= 2) {
             integrityFlagged = true;
+            markIdentityBurned(email, { reason: "integrity" });
             log.warn(
               "Instagram rejected 2 freshly-issued, correct codes — this signup session is integrity-flagged. Abandoning it so the loop can retry on a fresh IP/session (the only thing that can change the verdict)."
             );

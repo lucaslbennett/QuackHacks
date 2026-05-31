@@ -2,15 +2,17 @@ import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
 import { assembleReel } from "../services/video.js";
+import { writeFile } from "node:fs/promises";
 import { scrapeInstagramProfile } from "../services/browser/scrapeProfile.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { postReel } from "../services/browser/postReel.js";
 import { scrapeAccountMetrics } from "../services/browser/scrapeMetrics.js";
+import { updateInstagramProfile } from "../services/browser/editProfile.js";
 import * as postiz from "../services/postiz.js";
 import { generateEmail } from "../services/verification.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
 import { config } from "../config.js";
-import { mediaUrl, publicMediaUrl } from "../lib/util.js";
+import { loadMediaAsBase64, mediaPath, mediaUrl, publicMediaUrl } from "../lib/util.js";
 import { normalizeSchedule, upcomingFixedSlots } from "../lib/schedule.js";
 import { chainRandomSchedule } from "./postingSchedule.js";
 import { createLogger } from "../lib/logger.js";
@@ -75,7 +77,7 @@ export async function spawnAccount({ influencerId }) {
   // already-active account keeps its address (that signup succeeded with it).
   let email = account.email;
   if (!email || account.status !== "active") {
-    email = await generateEmail({ seed: influencer.handle || influencer.name });
+    email = await generateEmail({ seed: influencer.name || influencer.handle });
     account = await repo.igAccounts.update(account.id, { email });
   }
 
@@ -318,7 +320,7 @@ export async function autoPostViaPostiz({ influencerId, publishAt }) {
     prompt: built.imagePrompt,
     influencerId: influencer.id,
     label: "post",
-    frameAsSelfie: built.shotType !== "scene",
+    frameAsSelfie: built.shotType === "selfie",
     referenceImage: influencer.image_url || null,
   });
 
@@ -404,6 +406,55 @@ export async function autoPostViaPostiz({ influencerId, publishAt }) {
   };
 }
 
+// 4d. Sync profile to Instagram via Browser Use. Pushes the refined display
+// name / bio / portrait to the LIVE Instagram account — the profile edits Postiz
+// can't make. Needs a password-backed account (auto-spawn flow); a Postiz/OAuth
+// link alone isn't enough because we don't hold that account's password.
+export async function updateIgProfile({ influencerId, name, bio, profileImageUrl }) {
+  const influencer = await repo.influencers.get(influencerId);
+  if (!influencer) throw new Error("influencer not found");
+
+  const account = await repo.igAccounts.forInfluencer(influencerId);
+  if (!account || account.status !== "active" || !account.password_enc) {
+    throw new Error(
+      "No editable Instagram login on file. Profile sync needs an account " +
+        "created via the auto-spawn flow (stored password); Postiz-linked " +
+        "accounts can't be edited through the API."
+    );
+  }
+
+  // Materialize the portrait to a local file Stagehand can upload.
+  let profileImagePath = null;
+  if (profileImageUrl) {
+    const loaded = await loadMediaAsBase64(profileImageUrl);
+    if (loaded) {
+      profileImagePath = await mediaPath(influencerId, `ig-profile-${Date.now()}.png`);
+      await writeFile(profileImagePath, Buffer.from(loaded.data, "base64"));
+    } else {
+      log.warn("could not load portrait for IG profile sync:", profileImageUrl);
+    }
+  }
+
+  const result = await updateInstagramProfile({
+    account: {
+      username: account.username,
+      password: decryptSecret(account.password_enc),
+      session: account.session || {},
+    },
+    name: name || null,
+    bio: bio || null,
+    profileImagePath,
+  });
+
+  await repo.igAccounts.update(account.id, {
+    notes: result.updated
+      ? `Profile synced ${new Date().toISOString()}`
+      : account.notes || null,
+  });
+
+  return result;
+}
+
 // 5. Metrics: scrape views/likes/comments for the influencer's posts.
 export async function scrapeMetrics({ influencerId }) {
   const account = await repo.igAccounts.forInfluencer(influencerId);
@@ -440,5 +491,6 @@ export const handlers = {
   post_content: postContent,
   schedule_postiz: scheduleViaPostiz,
   auto_post_postiz: autoPostViaPostiz,
+  update_ig_profile: updateIgProfile,
   scrape_metrics: scrapeMetrics,
 };

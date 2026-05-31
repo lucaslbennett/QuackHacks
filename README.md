@@ -109,6 +109,10 @@ integrations are configured, and unconfigured services simply error on use.
 - `GET  /api/status` – integration health
 - `POST /api/influencers` – create from the onboarding wizard
 - `GET  /api/influencers/:id` – full state (persona, content, posts, metrics, jobs)
+- `POST /api/influencers/:id/refine` – prompt-based "Modify influencer": rewrite
+  the persona from a free-form instruction, optionally re-render the portrait,
+  and optionally sync the profile to the live Instagram account. Body:
+  `{ instruction, keepLikeness?, regenerateImage?, applyToInstagram? }`
 - `POST /api/influencers/:id/actions/:action` – `clone | spawn | generate | post | schedule | metrics`
 - `POST /api/influencers/:id/postiz` – link the influencer to a Postiz channel (`{ integrationId, platform }`)
 - `GET  /api/postiz/status` – verify the Postiz API key is connected
@@ -133,6 +137,26 @@ instead of (or alongside) the Stagehand IG poster.
    `{ contentId, runAt, type }` where `type` is `schedule | now | draft`).
 5. To make the daily planner route posts through Postiz automatically for linked
    influencers, set `SCHEDULER_USE_POSTIZ=true`.
+
+## Refining an influencer (prompt-based "Modify")
+
+Open an influencer and click **Modify influencer** to change them with plain
+language instead of editing form fields. Describe what you want ("lean her style
+streetwear", "warmer, funnier bio", "switch the niche to skincare", "give him a
+deeper voice") and Gemini rewrites only the parts you mention, keeping the rest
+of the character intact. It's a **refinable loop** — the modal stays open and
+logs each change, so you can keep iterating until it's right.
+
+- **Look changes** re-render the portrait automatically. "Keep the same face"
+  (default) restyles the existing person via the portrait as a subject reference;
+  turn it off for a genuinely different-looking person.
+- **Browser-base fallback for Instagram.** Postiz publishes posts but can't edit
+  an account's profile, so the optional **"Also update the live Instagram
+  profile"** pushes the new name, bio and photo to Instagram through Browser Use +
+  Stagehand (`server/services/browser/editProfile.js`, run as an
+  `update_ig_profile` job). This needs a password-backed account (the auto-spawn
+  flow); Postiz/OAuth-linked accounts can't be edited via API, so the refine
+  reports why instead of failing.
 
 ## Notes & responsible use
 

@@ -280,36 +280,46 @@ export default function BuildAccountModal({
                 </button>
 
                 <div className="mt-3 rounded-xl border border-black/10 bg-black/[0.02] p-3">
-                  <p className="text-[12px] font-medium text-black/70">
-                    Instant autofill (optional)
+                  <p className="text-[12px] font-semibold text-black/75">
+                    ⚡ One-click autofill
                   </p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-black/55">
-                    Drag this button to your bookmarks bar once, then click it on
-                    the Instagram tab to fill name, email, username and password.
-                  </p>
-                  <div className="mt-2.5 flex items-center gap-2">
-                    {/* href is a javascript: bookmarklet — set imperatively so
-                        React doesn't sanitize it out of the JSX href. */}
-                    <a
-                      ref={(el) => {
-                        if (el) el.setAttribute("href", autofillHref(draft));
-                      }}
-                      onClick={(e) => e.preventDefault()}
-                      draggable
-                      title="Drag me to your bookmarks bar"
-                      className="inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-black px-3 py-1.5 text-[12px] font-semibold text-white active:cursor-grabbing"
-                    >
-                      ⚡ Autofill Instagram
-                    </a>
+                  <ol className="mt-1.5 ml-4 list-decimal space-y-1.5 text-[12px] leading-relaxed text-black/60 marker:text-black/40">
+                    <li>
+                      Drag{" "}
+                      {/* href is a javascript: bookmarklet — set imperatively so
+                          React doesn't sanitize it out of the JSX href. */}
+                      <a
+                        ref={(el) => {
+                          if (el) el.setAttribute("href", autofillHref(draft));
+                        }}
+                        onClick={(e) => e.preventDefault()}
+                        draggable
+                        title="Drag me to your bookmarks bar"
+                        className="mx-0.5 inline-flex cursor-grab items-center gap-1 rounded-md bg-black px-2 py-0.5 align-middle text-[11px] font-semibold text-white active:cursor-grabbing"
+                      >
+                        ⚡ Autofill Instagram
+                      </a>{" "}
+                      onto your bookmarks bar.
+                    </li>
+                    <li>Switch to the Instagram tab you just opened.</li>
+                    <li>
+                      Click the bookmark — email, password, name &amp; username
+                      fill instantly.
+                    </li>
+                  </ol>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
                     <CopyButton
                       value={autofillCode(draft)}
                       label="Copy autofill code"
                       className="bg-white"
                     />
+                    <span className="text-[11px] text-black/40">
+                      Bookmarks bar hidden? Press ⌘⇧B (Ctrl+Shift+B)
+                    </span>
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed text-black/45">
-                    No bookmarks bar? Use the Copy buttons above to paste each
-                    field instead.
+                    Prefer to do it by hand? Use the Copy buttons in step 1 to
+                    paste each field. Either way, pick your birthday yourself.
                   </p>
                 </div>
               </StepRow>

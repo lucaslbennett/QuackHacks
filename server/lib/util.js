@@ -27,9 +27,12 @@ export { FIRST_NAMES, LAST_NAMES, formatNameListsForPrompt } from "./nameLists.j
 // The "amateur phone-photo" look applied to influencer images so they read as
 // authentic real-person snapshots rather than polished studio shots. Shared by
 // Gemini Nano Banana image generation so the aesthetic can be tuned in one
-// place. `selfie` toggles the self-taken front-camera framing (used for
-// portraits and selfie-style posts) vs. a normal candid photo taken of the
-// person (used for scene posts where a selfie framing would look forced).
+// place. `selfie` toggles the self-taken front-camera framing vs. the default
+// casual "friend shot" — a candid iPhone photo of the person taken by someone
+// else (or a propped-up phone) in the setting. We DEFAULT to the friend shot
+// because it reads as the most authentic, natural influencer photo; selfie
+// framing is opt-in for the occasional close phone-in-hand / mirror post where
+// it genuinely fits.
 //
 // `hasReference` matters for identity fidelity: when a reference profile photo
 // is supplied to the image model, the FACE and SKIN TONE must come from that
@@ -38,7 +41,7 @@ export { FIRST_NAMES, LAST_NAMES, formatNameListsForPrompt } from "./nameLists.j
 // competes with the reference and makes the model invent a new face/skin tone,
 // and (2) DROP the front-camera face-warping, which fights face fidelity. The
 // body/styling/attractiveness text is only used when there's no reference.
-function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
+function amateurPhotoStyle({ selfie = false, hasReference = false } = {}) {
   const framing = selfie
     ? (hasReference
         ? "A selfie that the person took themselves on an iPhone front-facing " +
@@ -132,8 +135,8 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
     iphoneLook +
     (hasReference
       ? "Authentic amateur iPhone snapshot — never polished, never professional-looking."
-      : "Authentic phone snapshot — the kind of flattering selfie someone would " +
-        "actually pick as their profile photo: casual and real, but she looks " +
+      : "Authentic phone snapshot — the kind of flattering casual photo someone " +
+        "would actually pick as their profile photo: casual and real, but she looks " +
         "conventionally attractive with a warm, confident expression and a " +
         "becoming angle. NOT a professional studio shoot, NOT airbrushed or " +
         "plastic skin, NOT an uncanny AI-perfect face.");
@@ -145,10 +148,11 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
 // When `hasReference` is true a profile photo is being supplied to the image
 // model as a subject reference, so the prompt instructs the model to KEEP that
 // exact person's identity and only change the scene — this is what keeps posts
-// looking like the same person as the profile photo. `selfie` controls framing.
+// looking like the same person as the profile photo. `selfie` controls framing
+// and defaults to false — a casual iPhone "friend shot" rather than a selfie.
 export function buildInfluencerImagePrompt(
   description,
-  { hasReference = false, selfie = true } = {}
+  { hasReference = false, selfie = false } = {}
 ) {
   const style = amateurPhotoStyle({ selfie, hasReference });
   const noUi = PHOTO_NO_UI_RULE;

@@ -9,7 +9,7 @@
 //                                                      # signup to see if IG actually delivered a code)
 //   node server/scripts/probeEmail.js <addr> --wait   # poll the address for a code (up to ~60s)
 import { config } from "../config.js";
-import { generateEmail, waitForEmailCode, inboxSnapshot } from "../services/verification.js";
+import { generateEmail, waitForEmailCode, inboxSnapshot, identityStatus } from "../services/verification.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("email-probe");
@@ -28,10 +28,13 @@ function printConfig() {
           passSet: Boolean(v.imap.pass),
           mailbox: v.imap.mailbox,
           aliasBase: v.imap.aliasBase || "(unset)",
+          aliasBasePool: v.imap.aliasBasePool,
           aliasMode: v.imap.aliasMode,
           catchAllDomain: v.imap.catchAllDomain || "(unset)",
+          excludeIdentityIds: v.imap.excludeIdentityIds,
         }
       : undefined,
+    identityRotation: v.emailProvider === "imap" ? identityStatus() : undefined,
   });
 }
 

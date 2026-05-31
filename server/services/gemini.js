@@ -476,6 +476,102 @@ export async function designOnboardingCharacter({ answers }) {
   return { ...visual, ...details };
 }
 
+// Refines an EXISTING influencer persona from a free-form, natural-language
+// instruction ("make her style more streetwear", "warmer funnier bio", "change
+// the niche to skincare", "give him a deeper voice"). This powers the prompt-
+// based "Modify influencer" flow and is meant to be called repeatedly to keep
+// iterating on the same character.
+//
+// Returns:
+//   {
+//     persona,        // the FULL updated persona (same shape as the onboarding
+//                     // character) with only the requested aspects changed
+//     summary,        // 1-2 sentence human description of what changed
+//     changedFields,  // top-level persona keys that were modified
+//     looksChanged,   // true when appearance/aesthetic/outfits/portrait changed
+//                     // (the caller re-renders the portrait when true)
+//     likeness,       // "keep" = same face, restyled · "new" = a different-
+//                     // looking person (e.g. different gender/age/ethnicity)
+//     imagePrompt,    // refreshed portrait prompt reflecting the new look
+//     profileChanged, // true when bio / display name / handle changed (the bits
+//                     // a live Instagram profile edit would push)
+//   }
+export async function refinePersona({ persona, instruction }) {
+  log.info("Refining persona:", String(instruction).slice(0, 80));
+
+  // Strip bookkeeping fields the model shouldn't see or rewrite.
+  const current = { ...(persona && typeof persona === "object" ? persona : {}) };
+  delete current.personaDefaults;
+  delete current.answers;
+
+  const system =
+    "You are a brand strategist who iteratively refines an existing AI " +
+    "influencer persona based on a creator's free-form instruction. You make " +
+    "ONLY the changes the instruction asks for and keep everything else exactly " +
+    "the same, so the character evolves coherently across many small edits. " +
+    "Always respond with strict JSON only.";
+
+  const prompt = `Here is the influencer's CURRENT persona (JSON):
+${JSON.stringify(current, null, 2)}
+
+The creator wants to modify this influencer. Their instruction:
+"""
+${instruction}
+"""
+
+${HUMAN_COPY_RULES}
+
+Apply the instruction and return the UPDATED persona. Rules (IMPORTANT):
+- Change ONLY what the instruction implies. Copy every other field through
+  UNCHANGED, character-for-character. Do not "improve" untouched fields.
+- Keep "displayName", "firstName", "lastName" and "handleSuggestions" the same
+  UNLESS the instruction explicitly asks to rename or re-handle the influencer.
+- Keep the persona internally consistent: if you change the look, update
+  "appearance", "aesthetic", "visualStyle", "typicalOutfits" and "imagePrompt"
+  so they agree. If you change the niche, update "contentPillars",
+  "contentFormats", "hashtagThemes" and "bio" to match.
+- "imagePrompt" must always be a complete, vivid portrait prompt for the CURRENT
+  (post-edit) look — a believable, photogenic real person.
+- Bios/captions follow the voice rules above (specific, human, never a summary
+  of the brief; max one emoji in the bio).
+
+Return strict JSON with this EXACT shape:
+{
+  "persona": { ...the full updated persona, same keys as the input persona... },
+  "summary": string,            // <= 2 sentences, what you changed, plain English
+  "changedFields": string[],    // top-level persona keys you modified
+  "looksChanged": boolean,      // true if appearance/outfits/portrait changed
+  "likeness": "keep" | "new",   // "new" only if the PERSON should look different
+                                // (gender, age bracket, ethnicity, body) — else "keep"
+  "imagePrompt": string,        // portrait prompt for the new look
+  "profileChanged": boolean     // true if bio, displayName or handle changed
+}`;
+
+  const data = await completeJson({ system, prompt, maxTokens: 2600, temperature: 0.8 });
+
+  const updated =
+    data && typeof data.persona === "object" && data.persona ? data.persona : current;
+  // Never let the model resurrect or clobber bookkeeping fields.
+  delete updated.personaDefaults;
+  delete updated.answers;
+
+  const imagePrompt =
+    String(data?.imagePrompt || updated.imagePrompt || "").trim() ||
+    [updated.appearance, updated.aesthetic].filter(Boolean).join(". ");
+
+  return {
+    persona: updated,
+    summary: String(data?.summary || "Updated the influencer.").trim(),
+    changedFields: Array.isArray(data?.changedFields)
+      ? data.changedFields.map((s) => String(s)).filter(Boolean)
+      : [],
+    looksChanged: Boolean(data?.looksChanged),
+    likeness: data?.likeness === "new" ? "new" : "keep",
+    imagePrompt,
+    profileChanged: Boolean(data?.profileChanged),
+  };
+}
+
 // Generates a commentary-style short-form video script in the persona's voice.
 export async function generateScript({ persona, topic }) {
   log.info("Generating script", topic ? `on "${topic}"` : "");
@@ -756,7 +852,7 @@ ${sceneRules}
 ${IMAGE_SCENE_RULES}
 - Describe what the person is DOING in the photo (action/pose). Refer to them as "the person" / "she" — never describe face, skin tone, hair, or body.
 - A reference photo defines what she looks like; your scene fields define only where she is, what she wears, and what she's doing.
-- shotType: "selfie" for close phone-in-hand / mirror shots; "scene" for wider candid photos in the setting.
+- shotType: default to "scene" — a casual iPhone photo of her taken by a friend (or a propped-up phone) in the setting. This candid friend-shot framing should be the norm for almost every post. Only choose "selfie" occasionally (roughly 1 in 5 posts) when a close phone-in-hand or mirror shot genuinely fits the moment; otherwise always pick "scene".
 
 Return JSON with this exact shape:
 {
@@ -781,7 +877,10 @@ Return JSON with this exact shape:
   // Normalize hashtags: strip bot magnets, de-dupe, cap at 6.
   const hashtags = sanitizeHashtags(data.hashtags);
 
-  const shotType = String(data.shotType || "").trim().toLowerCase() === "scene" ? "scene" : "selfie";
+  // Default to the candid "friend shot" (scene): only an explicit "selfie"
+  // from the model produces selfie framing, so missing/odd values fall back to
+  // the preferred casual iPhone shot rather than a selfie.
+  const shotType = String(data.shotType || "").trim().toLowerCase() === "selfie" ? "selfie" : "scene";
   const imagePrompt =
     assembleScenePrompt({
       setting: data.setting,
@@ -826,13 +925,16 @@ function imageGenerationError(err) {
 // (face, hair, skin tone, body) as their profile across posts. It may be a
 // /media URL or absolute path (string), or a preloaded { data, mimeType }
 // object. When provided, the prompt is reframed to "same person, new scene".
-// `frameAsSelfie` toggles selfie vs. candid framing in the style wrapper.
+// `frameAsSelfie` toggles selfie vs. candid framing in the style wrapper. It
+// defaults to false so images read as casual iPhone "friend shots" (a candid
+// photo taken of the person) rather than arm's-length selfies; callers opt in
+// to selfie framing per post when the shot genuinely calls for it.
 export async function generateInfluencerImage({
   prompt,
   influencerId,
   label = "influencer",
   aspectRatio = "1:1",
-  frameAsSelfie = true,
+  frameAsSelfie = false,
   referenceImage = null,
   trace,
   traceStepPrefix = "image",

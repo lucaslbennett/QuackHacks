@@ -238,9 +238,12 @@ function Section({
 export default function InfluencerCustomizeTab({
   influencer,
   onSaved,
+  onModify,
 }: {
   influencer: Influencer;
   onSaved: (inf: Influencer) => void;
+  // Opens the prompt-based "Modify influencer" flow (optional).
+  onModify?: () => void;
 }) {
   const questionnaire = useMemo(
     () =>
@@ -354,6 +357,27 @@ export default function InfluencerCustomizeTab({
           </button>
         </div>
       </div>
+
+      {onModify && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#5b73d6]/25 bg-[#5b73d6]/5 px-4 py-3.5">
+          <div className="min-w-0">
+            <p className="text-[14px] font-medium text-[#3f54b3]">
+              Prefer to just describe the change?
+            </p>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-black/55">
+              Modify the look, profile, persona or voice with a prompt — and keep
+              refining.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onModify}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#5b73d6] px-4 py-2 text-[13px] font-medium text-white transition hover:bg-[#4a61c2]"
+          >
+            <span aria-hidden>✦</span> Modify with a prompt
+          </button>
+        </div>
+      )}
 
       {!hasDefaults && (
         <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
