@@ -14,6 +14,29 @@ const PILL_BUTTONS = [
   "View revenue reports",
 ] as const;
 
+const SAMPLE_PROMPTS = [
+  {
+    label: "Fitness coach",
+    prompt:
+      "Energetic fitness coach in her late 20s — athletic build, warm smile, gym and outdoor workout content, motivational captions about strength and consistency.",
+  },
+  {
+    label: "Tech reviewer",
+    prompt:
+      "Sharp, approachable tech reviewer in his 30s — casual streetwear, clean desk setup, short-form reviews of gadgets and apps with honest, hype-free takes.",
+  },
+  {
+    label: "Travel creator",
+    prompt:
+      "Adventurous travel creator in her early 30s — sun-kissed look, cinematic destination reels, tips on budget travel and hidden gems across Europe and Asia.",
+  },
+  {
+    label: "Beauty & skincare",
+    prompt:
+      "Polished beauty creator focused on skincare — soft glam, dewy skin, morning and night routines, ingredient breakdowns, and realistic before-and-after progress.",
+  },
+] as const;
+
 const EMAIL = "hello@fastpost.co";
 
 function CopyIcon() {
@@ -99,6 +122,11 @@ export default function Hero({
     } catch {
       /* clipboard unavailable */
     }
+  };
+
+  const handleSamplePrompt = (prompt: string) => {
+    setChatValue(prompt);
+    setComposerActive(true);
   };
 
   return (
@@ -215,6 +243,29 @@ export default function Hero({
             </svg>
           </button>
         </form>
+
+        {/* Sample prompts — shown once the composer has fully expanded. */}
+        <div
+          className="flex flex-wrap justify-center gap-2 overflow-hidden transition-[opacity,max-height,margin] duration-300"
+          style={{
+            opacity: settled ? 1 : 0,
+            maxHeight: settled ? "6rem" : 0,
+            marginBottom: settled ? "1rem" : 0,
+            pointerEvents: settled ? "auto" : "none",
+          }}
+        >
+          {SAMPLE_PROMPTS.map(({ label, prompt }) => (
+            <button
+              key={label}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleSamplePrompt(prompt)}
+              className="rounded-full border border-black/15 bg-black/[0.03] px-3.5 py-1.5 text-[13px] text-black/70 transition-colors duration-200 hover:border-black/25 hover:bg-black/[0.06] hover:text-black sm:text-[14px]"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {/* Action pill buttons */}
         <div

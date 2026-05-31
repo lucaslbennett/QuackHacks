@@ -5,6 +5,7 @@ import * as postiz from "../services/postiz.js";
 import { config } from "../config.js";
 import { requireAuth, optionalAuth } from "../lib/auth.js";
 import { pick, LAST_NAMES } from "../lib/util.js";
+import { createGenTrace } from "../lib/genTrace.js";
 
 const router = Router();
 
@@ -30,8 +31,23 @@ router.post(
         .json({ ok: false, error: "image generation is not configured" });
     }
 
-    const image = await gemini.generateInfluencerImage({ prompt });
-    res.json({ ok: true, prompt, imageUrl: image.url });
+    const trace = createGenTrace("influencer-image", {
+      promptChars: prompt.length,
+    });
+    try {
+      trace.step("handler_start");
+      const image = await gemini.generateInfluencerImage({
+        prompt,
+        label: "hero-preview",
+        trace,
+        traceStepPrefix: "image",
+      });
+      trace.done({ imageUrl: image.url });
+      res.json({ ok: true, prompt, imageUrl: image.url });
+    } catch (err) {
+      trace.fail("handler", err);
+      throw err;
+    }
   })
 );
 
@@ -57,13 +73,27 @@ router.post(
     // for "Stacy") don't collapse to the same surname. The surname is picked
     // from a real list and suggested to the model.
     const suggestedLastName = pick(LAST_NAMES);
-
-    const { character, imageUrl } = await gemini.designOnboardingCharacterWithImage({
-      answers,
-      suggestedLastName,
+    const trace = createGenTrace("onboarding-character", {
+      answerKeys: Object.keys(answers),
     });
 
-    res.json({ ok: true, character, imageUrl });
+    try {
+      trace.step("handler_start");
+      const { character, imageUrl } = await gemini.designOnboardingCharacterWithImage({
+        answers,
+        suggestedLastName,
+        trace,
+      });
+      trace.done({
+        imageUrl,
+        displayName: character?.displayName,
+        niche: character?.niche,
+      });
+      res.json({ ok: true, character, imageUrl });
+    } catch (err) {
+      trace.fail("handler", err);
+      throw err;
+    }
   })
 );
 
@@ -120,7 +150,17 @@ router.post(
       if (inf && inf.user_id === req.user.id) ownedInfluencer = inf;
     }
 
-    const post = await gemini.generatePostContent({ persona: effectivePersona });
+    const trace = createGenTrace("post", {
+      influencerId: ownedInfluencer?.id || influencerId || null,
+      hasPersona,
+    });
+    try {
+    trace.step("handler_start");
+
+    const post = await gemini.generatePostContent({
+      persona: effectivePersona,
+      trace,
+    });
 
     // Render the post image from the scene prompt through Gemini Nano Banana.
     const imagePrompt =
@@ -131,12 +171,15 @@ router.post(
         .join(". ") ||
       fallbackPrompt;
 
+    trace.step("post_image_start", { imagePromptChars: imagePrompt.length });
     const image = await gemini.generateInfluencerImage({
       prompt: imagePrompt,
       influencerId: ownedInfluencer?.id,
       label: "post",
       frameAsSelfie: post.shotType !== "scene",
       referenceImage: ownedInfluencer?.image_url || null,
+      trace,
+      traceStepPrefix: "post_image",
     });
 
     const hashtagLine = post.hashtags.map((h) => `#${h}`).join(" ");
@@ -169,6 +212,7 @@ router.post(
       }
     }
 
+    trace.done({ imageUrl: image.url, contentId });
     res.json({
       ok: true,
       contentId,
@@ -183,6 +227,10 @@ router.post(
       referenceStatus: image.referenceStatus,
       referenceUrl: image.referenceUrl,
     });
+    } catch (err) {
+      trace.fail("handler", err);
+      throw err;
+    }
   })
 );
 
@@ -240,6 +288,9 @@ router.post(
     if (!inf) return;
 
     const persona = inf.persona && typeof inf.persona === "object" ? inf.persona : {};
+    const trace = createGenTrace("post-preview", { influencerId: inf.id });
+    try {
+    trace.step("handler_start");
 
     // Build caption + hashtags + an image scene from the persona, then render
     // the photo.
@@ -249,6 +300,10 @@ router.post(
         displayName: persona.displayName || inf.name,
         niche: persona.niche || inf.niche,
       },
+      trace,
+    });
+    trace.step("post_image_start", {
+      imagePromptChars: String(built.imagePrompt || "").length,
     });
     const image = await gemini.generateInfluencerImage({
       prompt: built.imagePrompt,
@@ -256,6 +311,8 @@ router.post(
       label: "post",
       frameAsSelfie: built.shotType !== "scene",
       referenceImage: inf.image_url || null,
+      trace,
+      traceStepPrefix: "post_image",
     });
     const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
 
@@ -278,6 +335,7 @@ router.post(
       },
     });
 
+    trace.done({ contentId: item.id, imageUrl: image.url });
     res.json({
       ok: true,
       published: false,
@@ -291,6 +349,10 @@ router.post(
       referenceStatus: image.referenceStatus,
       referenceUrl: image.referenceUrl,
     });
+    } catch (err) {
+      trace.fail("handler", err);
+      throw err;
+    }
   })
 );
 

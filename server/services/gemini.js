@@ -5,12 +5,24 @@ import {
   mediaPath,
   mediaUrl,
   buildInfluencerImagePrompt,
+  PHOTO_NO_UI_RULE,
   loadMediaAsBase64,
   sleep,
 } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("gemini");
+
+// Scene/imagePrompt text must not invite app UI in the rendered photo (models
+// often draw story bars, DMs, etc. when prompts mention screenshots or apps).
+const IMAGE_SCENE_RULES = `
+Image scene rules (for imagePrompt, setting, outfit, action — feeds an image model):
+- Describe only the real-world scene: location, outfit, pose, activity, lighting mood.
+- NEVER ask for screenshots, phone-screen close-ups, "story UI", DMs, chat bubbles,
+  notification overlays, or any social-app interface inside the photo.
+- NEVER describe the image as "on Instagram", "in Stories", or "a screenshot of".
+- A phone may appear in a mirror selfie, but never with messaging or app UI on screen.
+${PHOTO_NO_UI_RULE}`.trim();
 
 // Transient errors worth retrying: 429 (RESOURCE_EXHAUSTED / rate limit) and
 // 503 (model overloaded / UNAVAILABLE). These limits are usually short windows,
@@ -86,28 +98,45 @@ export async function verifyAccess() {
 // Low level helper that asks Gemini for JSON and parses it defensively.
 // `temperature` lets callers crank up variety (e.g. fresh post captions) while
 // most callers keep the default for stable, on-brand output.
-async function completeJson({ system, prompt, maxTokens = 2000, temperature }) {
-  const c = getClient();
-  const res = await withRetry(
-    () =>
-      c.models.generateContent({
-        model: config.gemini.model,
-        contents: prompt,
-        config: {
-          systemInstruction: system,
-          maxOutputTokens: maxTokens,
-          responseMimeType: "application/json",
-          ...(temperature !== undefined ? { temperature } : {}),
-          // Flash-Lite is the lightweight tier; keep thinking off so the whole
-          // token budget is spent on the JSON answer (lower latency + cost).
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-    { label: "completeJson" }
-  );
-  const text = (res.text || "").trim();
-  if (!text) throw new Error("Empty response from Gemini");
-  return parseJson(text);
+async function completeJson({
+  system,
+  prompt,
+  maxTokens = 2000,
+  temperature,
+  trace,
+  step: stepName,
+}) {
+  const run = async () => {
+    const c = getClient();
+    const res = await withRetry(
+      () =>
+        c.models.generateContent({
+          model: config.gemini.model,
+          contents: prompt,
+          config: {
+            systemInstruction: system,
+            maxOutputTokens: maxTokens,
+            responseMimeType: "application/json",
+            ...(temperature !== undefined ? { temperature } : {}),
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+      { label: stepName || "completeJson" }
+    );
+    const text = (res.text || "").trim();
+    if (!text) throw new Error("Empty response from Gemini");
+    return parseJson(text);
+  };
+
+  if (trace && stepName) {
+    return trace.span(stepName, run, {
+      kind: "llm_json",
+      model: config.gemini.model,
+      maxTokens,
+      temperature,
+    });
+  }
+  return run();
 }
 
 function parseJson(text) {
@@ -218,6 +247,8 @@ Onboarding answers: ${JSON.stringify(questionnaire || {}, null, 2)}
 Reference creator data scraped from their public profile(s):
 ${JSON.stringify(sources || [], null, 2)}
 
+${IMAGE_SCENE_RULES}
+
 Return JSON with this exact shape:
 {
   "displayName": string,
@@ -289,7 +320,8 @@ How to use the answers (IMPORTANT):
 
 // Fast first pass: names + visual identity + portrait prompt. Kept small so image
 // generation can start while the richer content plan is still being written.
-export async function designOnboardingVisual({ answers, suggestedLastName }) {
+export async function designOnboardingVisual({ answers, suggestedLastName, trace }) {
+  trace?.detail("visual_identity_start", { model: config.gemini.model });
   log.info("Designing onboarding visual identity");
   const system =
     "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
@@ -302,6 +334,8 @@ ${onboardingAnswersBlock(answers)}
 
 ${onboardingNamingRules(suggestedLastName)}
 
+${IMAGE_SCENE_RULES}
+
 Return JSON with this exact shape:
 {
   "firstName": string,
@@ -312,15 +346,28 @@ Return JSON with this exact shape:
   "niche": string,
   "appearance": string,             // vivid physical description for image generation
   "aesthetic": string,              // visual mood: lighting, palette, vibe
-  "imagePrompt": string             // rich portrait prompt; photogenic but believable
+  "imagePrompt": string             // rich portrait prompt; photogenic, believable, NO app UI
 }`;
 
-  return completeJson({ system, prompt, maxTokens: 900, temperature: 1 });
+  const visual = await completeJson({
+    system,
+    prompt,
+    maxTokens: 900,
+    temperature: 1,
+    trace,
+    step: "llm.visual_identity",
+  });
+  trace?.detail("visual_identity_ready", {
+    displayName: visual?.displayName,
+    niche: visual?.niche,
+  });
+  return visual;
 }
 
 // Second pass: voice, content plan, and post examples. Runs in parallel with
 // portrait rendering once the visual identity exists.
-export async function designOnboardingPersonaDetails({ answers, visual }) {
+export async function designOnboardingPersonaDetails({ answers, visual, trace }) {
+  trace?.detail("persona_details_start", { model: config.gemini.model });
   log.info("Designing onboarding persona details");
   const system =
     "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
@@ -362,22 +409,60 @@ Return JSON with this exact shape:
   "hashtagThemes": string[5]
 }`;
 
-  return completeJson({ system, prompt, maxTokens: 1800, temperature: 1 });
+  const details = await completeJson({
+    system,
+    prompt,
+    maxTokens: 1800,
+    temperature: 1,
+    trace,
+    step: "llm.persona_details",
+  });
+  trace?.detail("persona_details_ready", {
+    pillars: details?.contentPillars?.length,
+    samplePosts: details?.samplePosts?.length,
+  });
+  return details;
 }
 
 // Portrait onboarding: visual identity first, then persona details + image in parallel.
-export async function designOnboardingCharacterWithImage({ answers, suggestedLastName }) {
+export async function designOnboardingCharacterWithImage({
+  answers,
+  suggestedLastName,
+  trace,
+}) {
   log.info("Designing onboarding character with parallel portrait");
-  const visual = await designOnboardingVisual({ answers, suggestedLastName });
+  trace?.step("request_received", {
+    answerKeys: Object.keys(answers || {}),
+    suggestedLastName,
+  });
+
+  const visual = await designOnboardingVisual({ answers, suggestedLastName, trace });
   const imagePrompt =
     visual.imagePrompt ||
     [visual.appearance, visual.aesthetic].filter(Boolean).join(". ") ||
     visual.displayName;
 
+  trace?.step("parallel_phase_start", {
+    imagePromptChars: String(imagePrompt).length,
+    displayName: visual.displayName,
+  });
+  const parallelStart = Date.now();
+
   const [details, image] = await Promise.all([
-    designOnboardingPersonaDetails({ answers, visual }),
-    generateInfluencerImage({ prompt: imagePrompt }),
+    designOnboardingPersonaDetails({ answers, visual, trace }),
+    generateInfluencerImage({
+      prompt: imagePrompt,
+      label: "onboarding-portrait",
+      trace,
+      traceStepPrefix: "portrait",
+    }),
   ]);
+
+  trace?.step("parallel_phase_done", {
+    parallelWallMs: Date.now() - parallelStart,
+    imageUrl: image.url,
+    referenceStatus: image.referenceStatus,
+  });
 
   return {
     character: { ...visual, ...details },
@@ -410,6 +495,8 @@ ${JSON.stringify(persona, null, 2)}
 
 Topic: ${topic || "pick a fresh, on-brand topic from the persona's content pillars"}
 
+${IMAGE_SCENE_RULES}
+
 Return JSON:
 {
   "title": string,
@@ -417,7 +504,7 @@ Return JSON:
   "hook": string,                 // the spoken first line
   "narration": string,            // full voiceover text to send to TTS (include the hook)
   "onScreenText": string[],       // 3-6 short caption phrases to burn into the video
-  "bRollPrompts": string[3],      // image/video generation prompts matching the persona's visualStyle
+  "bRollPrompts": string[3],      // real-world scene prompts only — no app UI (see image scene rules)
   "caption": string,              // instagram caption with a CTA
   "hashtags": string[8]           // no # symbol, lowercase
 }`;
@@ -610,7 +697,11 @@ function assembleScenePrompt({ setting, outfit, action }) {
 // prompt) for an existing persona. Deliberately high-variety: a random angle,
 // time-of-day and seed plus a high temperature so repeated calls produce
 // distinct, human-sounding posts rather than near-duplicates.
-export async function generatePostContent({ persona }) {
+export async function generatePostContent({ persona, trace }) {
+  trace?.detail("post_content_start", {
+    displayName: persona?.displayName,
+    niche: persona?.niche,
+  });
   log.info("Generating post content for", persona?.displayName || "influencer");
 
   const angle = pickRandom(POST_ANGLES);
@@ -668,6 +759,7 @@ ${
     : ""
 }
 ${sceneRules}
+${IMAGE_SCENE_RULES}
 - Describe what the person is DOING in the photo (action/pose). Refer to them as "the person" / "she" — never describe face, skin tone, hair, or body.
 - A reference photo defines what she looks like; your scene fields define only where she is, what she wears, and what she's doing.
 - shotType: "selfie" for close phone-in-hand / mirror shots; "scene" for wider candid photos in the setting.
@@ -688,6 +780,8 @@ Return JSON with this exact shape:
     prompt,
     maxTokens: 1200,
     temperature: 1.15,
+    trace,
+    step: "llm.post_content",
   });
 
   // Normalize hashtags: strip bot magnets, de-dupe, cap at 6.
@@ -700,6 +794,8 @@ Return JSON with this exact shape:
       outfit: data.outfit,
       action: data.action,
     }) || String(data.imagePrompt || "").trim();
+
+  trace?.detail("post_content_ready", { shotType, imagePromptChars: imagePrompt.length });
 
   return {
     caption: String(data.caption || "").trim(),
@@ -744,9 +840,23 @@ export async function generateInfluencerImage({
   aspectRatio = "1:1",
   frameAsSelfie = true,
   referenceImage = null,
+  trace,
+  traceStepPrefix = "image",
 }) {
   const c = getClient();
+  const detail = (name, extra) =>
+    trace?.detail(`${traceStepPrefix}.${name}`, {
+      label,
+      influencerId: influencerId || null,
+      ...extra,
+    });
   log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
+  detail("start", {
+    promptChars: String(prompt).length,
+    frameAsSelfie,
+    aspectRatio,
+    imageModel: config.gemini.imageModel,
+  });
 
   const referenceUrl =
     typeof referenceImage === "string" ? referenceImage : referenceImage ? "(preloaded)" : null;
@@ -754,6 +864,7 @@ export async function generateInfluencerImage({
   // Resolve the reference photo (if any) into inline base64 the model can read.
   let reference = null;
   let referenceStatus = "not_requested";
+  const refLoadStart = Date.now();
   if (referenceImage) {
     reference =
       typeof referenceImage === "string"
@@ -772,20 +883,36 @@ export async function generateInfluencerImage({
         `via=${reference.source || "unknown"}`,
         "contents=image+text"
       );
+      detail("reference_loaded", {
+        referenceStatus,
+        spanMs: Date.now() - refLoadStart,
+        refBytes: byteLen,
+        refSource: reference.source,
+      });
     } else {
       referenceStatus = "load_failed";
       log.warn(
         "reference image FAILED to load; generating text-only (no inlineData):",
         referenceUrl
       );
+      detail("reference_load_failed", {
+        referenceStatus,
+        spanMs: Date.now() - refLoadStart,
+        referenceUrl,
+      });
     }
   } else {
     log.info("reference image not requested; generating text-only (no inlineData)");
+    detail("reference_skipped", { referenceStatus });
   }
 
   const fullPrompt = buildInfluencerImagePrompt(prompt, {
     hasReference: Boolean(reference),
     selfie: frameAsSelfie,
+  });
+  detail("prompt_built", {
+    fullPromptChars: fullPrompt.length,
+    hasReference: Boolean(reference),
   });
 
   // When a reference photo is supplied, send it alongside the prompt so the
@@ -799,19 +926,33 @@ export async function generateInfluencerImage({
     : fullPrompt;
 
   const isLegacyFlash = config.gemini.imageModel === "gemini-2.5-flash-image";
+  const runGeminiImage = async () => {
+    const res = await withRetry(
+      () =>
+        c.models.generateContent({
+          model: config.gemini.imageModel,
+          contents,
+          config: {
+            responseModalities: ["IMAGE"],
+            imageConfig: {
+              aspectRatio,
+              ...(!isLegacyFlash ? { imageSize: "2K" } : {}),
+            },
+          },
+        }),
+      { label: "generateInfluencerImage" }
+    );
+    return res;
+  };
+
   let res;
   try {
-    res = await c.models.generateContent({
-      model: config.gemini.imageModel,
-      contents,
-      config: {
-        responseModalities: ["IMAGE"],
-        imageConfig: {
-          aspectRatio,
-          ...(!isLegacyFlash ? { imageSize: "2K" } : {}),
-        },
-      },
-    });
+    res = trace
+      ? await trace.span(`${traceStepPrefix}.gemini_image`, runGeminiImage, {
+          imageModel: config.gemini.imageModel,
+          hasReference: Boolean(reference),
+        })
+      : await runGeminiImage();
   } catch (err) {
     throw imageGenerationError(err);
   }
@@ -819,15 +960,24 @@ export async function generateInfluencerImage({
   const parts = res?.candidates?.[0]?.content?.parts || [];
   const imagePart = parts.find((p) => p?.inlineData?.data);
   if (!imagePart) {
-    throw new Error("Nano Banana returned no image");
+    const err = new Error("Nano Banana returned no image");
+    trace?.fail(`${traceStepPrefix}.no_image_part`, err);
+    throw err;
   }
 
   const buffer = Buffer.from(imagePart.inlineData.data, "base64");
+  const writeStart = Date.now();
   const out = await mediaPath(
     influencerId || "previews",
     `${label}-${Date.now()}.png`
   );
   await writeFile(out, buffer);
+  detail("media_saved", {
+    spanMs: Date.now() - writeStart,
+    outputBytes: buffer.length,
+    path: out,
+  });
+
   return {
     url: mediaUrl(out),
     path: out,

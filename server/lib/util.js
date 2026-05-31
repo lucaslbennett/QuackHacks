@@ -11,6 +11,16 @@ export const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1
 
 export const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Hard constraint for all influencer image generation (profile + posts). Models
+// often interpret "Instagram story" / "phone snapshot" as rendering app chrome.
+export const PHOTO_NO_UI_RULE =
+  "CRITICAL — the output must be ONE clean photograph only, with zero UI: " +
+  "no screenshot framing, no picture-of-a-phone-screen, no Instagram/TikTok/" +
+  "Snapchat/Facebook/Messages UI, no story bars or stickers, no chat bubbles, " +
+  "no notification banners, no like/comment/share buttons, no status bars, " +
+  "no watermarks, no captions burned into the image, no app chrome of any kind. " +
+  "If a phone appears, only the back, edge, or case — never an on-screen interface.";
+
 // Real, common first names and surnames spanning a range of origins. Sampled
 // independently so a generated influencer's name feels like a real person
 // rather than a niche pun. Shared by the no-LLM fallback and by the LLM path,
@@ -49,7 +59,8 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
         ? "A selfie that the person took themselves on an iPhone front-facing " +
           "camera, held at arm's length. The arm holding the phone is visible " +
           "reaching toward the camera, OR it is a mirror selfie with the phone " +
-          "clearly visible in hand. Close, slightly-too-near crop typical of a " +
+          "in hand (back of phone or blank screen only — never app UI on screen). " +
+          "Close, slightly-too-near crop typical of a " +
           "front-facing phone camera, but WITHOUT distorting or reshaping the " +
           "face — keep the face's true proportions and identity. It must " +
           "obviously look like a self-taken iPhone photo, NOT a photo taken by " +
@@ -57,7 +68,8 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
         : "A selfie that the person took themselves on a smartphone front-facing " +
           "camera, held at arm's length. The arm holding the phone is visible " +
           "reaching toward the camera, OR it is a mirror selfie with the phone " +
-          "clearly visible in hand. Close arm's-length crop typical of a " +
+          "in hand (back of phone or blank screen only — never app UI on screen). " +
+          "Close arm's-length crop typical of a " +
           "front-facing phone camera, but WITHOUT distorting or reshaping the " +
           "face — keep natural, conventionally attractive facial proportions. " +
           "It must obviously look like a self-taken phone photo, NOT a photo " +
@@ -123,12 +135,13 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
       "NOT portrait-mode background blur, NOT an influencer photoshoot, NOT " +
       "cinematic color grading. Slight iPhone JPEG compression, a little grain, " +
       "mild phone-camera softness, slightly off-center or imperfect framing, " +
-      "casual Instagram/Snapchat story energy. "
+      "casual in-the-moment social-post energy (the photo itself only — never " +
+      "rendered inside an app frame). "
     : "";
 
   const capture =
     "The PHOTO itself (not the person) is a candid, un-staged everyday phone " +
-    "snapshot posted to Instagram or Snapchat. " +
+    "snapshot — a real photo file, NOT a screenshot of a social app. " +
     lighting +
     skin +
     iphoneLook +
@@ -153,6 +166,7 @@ export function buildInfluencerImagePrompt(
   { hasReference = false, selfie = true } = {}
 ) {
   const style = amateurPhotoStyle({ selfie, hasReference });
+  const noUi = PHOTO_NO_UI_RULE;
   if (hasReference) {
     return (
       "The provided reference photo IS the person. Copy her identity from the " +
@@ -168,10 +182,11 @@ export function buildInfluencerImagePrompt(
       "how it is shot — never how the person looks. Generate a NEW candid photo " +
       "of this exact person in a fresh pose and framing. " +
       style +
+      noUi +
       ` Scene for this new photo: ${description}`
     );
   }
-  return `${style} Description: ${description}`;
+  return `${style}${noUi} Description: ${description}`;
 }
 
 // Resolve a /media URL or relative path to an absolute file under MEDIA_DIR.
