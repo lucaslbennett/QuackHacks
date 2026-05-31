@@ -75,22 +75,38 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
   // from the reference image, including under the new lighting.
   const skin = hasReference
     ? "Render the skin with realistic phone-camera texture (visible pores, NOT " +
-      "plastic, NOT over-smoothed, NOT airbrushed). Keep the person's own skin " +
-      "tone, complexion, and features exactly as in the reference image; let the " +
-      "scene's lighting fall across that real face naturally without changing " +
-      "who they are. "
+      "plastic, NOT over-smoothed, NOT airbrushed). Reproduce the EXACT skin " +
+      "tone, depth, and undertone from the reference image. Do NOT lighten, " +
+      "brighten, whiten, wash out, desaturate, or warm the complexion under any " +
+      "lighting — preserve a deep/dark complexion at its true depth. Choose the " +
+      "exposure and white balance so the rendered skin tone matches the " +
+      "reference; if uncertain, err toward the reference's true, deeper tone " +
+      "rather than a lighter version. "
     : "Slight phone-camera softness, a little grain, and realistic skin texture " +
       "with visible pores (NOT plastic, NOT over-smoothed, NOT airbrushed) — " +
       "but clear, attractive skin without distracting blemishes or heavy oil " +
       "shine. ";
 
+  // LIGHTING: on the no-reference path we allow warm/flash looks for variety.
+  // On the reference path we keep lighting tone-NEUTRAL — flash, "warm", and
+  // "flattering" all bias the render lighter/warmer and pull skin tone away from
+  // the reference (worst on darker complexions), so they're removed there.
+  const lighting = hasReference
+    ? "Everyday phone-camera lighting: soft, even, natural ambient light with a " +
+      "neutral white balance and no strong warm or cool color cast on the skin. " +
+      "Natural, accurate exposure that does NOT brighten, lighten, or wash out " +
+      "the face. Not a professional studio setup, no ring light, no three-point " +
+      "lighting, no flash, no heavy color grading. "
+    : "Everyday phone-camera lighting: soft window daylight, warm indoor light, " +
+      "or a mild on-camera flash — natural and a little uneven, but still " +
+      "flattering enough to read as a photo someone would actually post. Not a " +
+      "professional studio setup, no ring light, no three-point lighting, no " +
+      "heavy color grading. ";
+
   const capture =
     "The PHOTO itself (not the person) is a candid, un-staged everyday phone " +
-    "snapshot posted to Instagram or Snapchat. Everyday phone-camera lighting: " +
-    "soft window daylight, warm indoor light, or a mild on-camera flash — " +
-    "natural and a little uneven, but still flattering enough to read as a " +
-    "photo someone would actually post. Not a professional studio setup, no " +
-    "ring light, no three-point lighting, no heavy color grading. " +
+    "snapshot posted to Instagram or Snapchat. " +
+    lighting +
     skin +
     "Authentic amateur snapshot framing and capture. Avoid an obviously posed, " +
     "glamour, or AI-perfect look.";
