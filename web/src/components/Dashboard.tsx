@@ -75,7 +75,6 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
   }, [user]);
 
   const selectSection = (s: DashSection) => {
-    setSelected(null);
     setSection(s);
   };
 
@@ -84,7 +83,8 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     setSelected(inf);
   };
 
-  const listPinned = section === "influencers" && selected !== null;
+  const onInfluencersPage = section === "influencers";
+  const listPinned = onInfluencersPage && selected !== null;
   const listCollapsed = listPinned && !listHovered;
 
   useEffect(() => {
@@ -135,7 +135,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
         onHome?.();
       }}
       onCreate={() => onCreate?.()}
-      middleColumn={middleColumn}
+      middleColumn={onInfluencersPage ? middleColumn : undefined}
       middleColumnCollapsed={listCollapsed}
       middleColumnHoverable={listPinned}
       onMiddleColumnMouseEnter={() => setListHovered(true)}
