@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   getPostingSchedule,
   savePostingSchedule,
-  type PostingSchedule,
   type PostingScheduleSummary,
 } from "../lib/influencers";
 
