@@ -61,7 +61,13 @@ export default function Dashboard() {
   const name = user?.name || user?.email?.split("@")[0] || "there";
   const [saved, setSaved] = useState<Generation[]>([]);
 
+  // Re-fetch whenever the signed-in user changes so data shows immediately
+  // after login (the token isn't available until auth resolves).
   useEffect(() => {
+    if (!user) {
+      setSaved([]);
+      return;
+    }
     let active = true;
     listSavedGenerations().then((gens) => {
       if (active) setSaved(gens);
@@ -69,7 +75,7 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [user]);
 
   return (
     <div className="min-h-screen bg-white text-black">
