@@ -57,11 +57,11 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
         : "A selfie that the person took themselves on a smartphone front-facing " +
           "camera, held at arm's length. The arm holding the phone is visible " +
           "reaching toward the camera, OR it is a mirror selfie with the phone " +
-          "clearly visible in hand. Close, slightly-too-near crop with mild " +
-          "front-camera wide-angle lens distortion (face a little enlarged, " +
-          "slightly warped proportions). It must obviously look like a self-taken " +
-          "phone photo, NOT a photo taken by someone else and NOT a professional " +
-          "or content-creator shot. ")
+          "clearly visible in hand. Close arm's-length crop typical of a " +
+          "front-facing phone camera, but WITHOUT distorting or reshaping the " +
+          "face — keep natural, conventionally attractive facial proportions. " +
+          "It must obviously look like a self-taken phone photo, NOT a photo " +
+          "taken by someone else and NOT a professional or content-creator shot. ")
     : hasReference
       ? "A casual iPhone snapshot of the person in the scene, taken by a friend " +
         "holding an iPhone or on a propped-up phone — natural, slightly imperfect " +
@@ -134,8 +134,11 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
     iphoneLook +
     (hasReference
       ? "Authentic amateur iPhone snapshot — never polished, never professional-looking."
-      : "Authentic amateur snapshot framing and capture. Avoid an obviously posed, " +
-        "glamour, or AI-perfect look.");
+      : "Authentic phone snapshot — the kind of flattering selfie someone would " +
+        "actually pick as their profile photo: casual and real, but she looks " +
+        "conventionally attractive with a warm, confident expression and a " +
+        "becoming angle. NOT a professional studio shoot, NOT airbrushed or " +
+        "plastic skin, NOT an uncanny AI-perfect face.");
 
   return framing + subject + capture;
 }
@@ -172,12 +175,16 @@ export function buildInfluencerImagePrompt(
 }
 
 // Resolve a /media URL or relative path to an absolute file under MEDIA_DIR.
+// /media/... URLs must be handled before path.isAbsolute — on Unix they start
+// with "/" and would otherwise be treated as filesystem-root paths (e.g.
+// "/media/previews/foo.png" instead of "<repo>/media/previews/foo.png").
 function resolveMediaAbsPath(urlOrPath) {
-  if (path.isAbsolute(urlOrPath)) return urlOrPath;
-  if (urlOrPath.startsWith("/media/")) {
-    return path.resolve(config.mediaDir, urlOrPath.slice("/media/".length));
+  const raw = String(urlOrPath || "").trim();
+  if (raw.startsWith("/media/")) {
+    return path.resolve(config.mediaDir, raw.slice("/media/".length));
   }
-  return path.resolve(config.mediaDir, urlOrPath);
+  if (path.isAbsolute(raw)) return raw;
+  return path.resolve(config.mediaDir, raw);
 }
 
 function mimeFromPath(abs) {

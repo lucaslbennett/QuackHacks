@@ -264,7 +264,8 @@ export async function designOnboardingCharacter({
   const system =
     "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
     "From a few short onboarding answers you invent a complete, believable creator and the content they post. " +
-    "Be specific and concrete. Always respond with strict JSON only.";
+    "Be specific about who they are as a person; keep niche and aesthetic subtle in anything they would post publicly. " +
+    "Always respond with strict JSON only.";
 
   const prompt = `Design an AI influencer character from these onboarding answers.
 
@@ -286,6 +287,8 @@ How to use the answers (IMPORTANT):
 - The bio and posts should read like a real human wrote them, not like a brief
   that lists its own targeting parameters.
 
+${HUMAN_COPY_RULES}
+
 Naming rules (IMPORTANT — read carefully):
 - The name must read like a REAL ORDINARY PERSON, not a brand or a username.
 - firstName: a common, real-world first name an actual person would have. If the
@@ -306,10 +309,10 @@ Return JSON with this exact shape:
   "firstName": string,              // a common, real first name (see naming rules)
   "lastName": string,               // a real, common surname (see naming rules)
   "displayName": string,            // exactly "{firstName} {lastName}", nothing else
-  "tagline": string,                // <= 60 chars, the character in one line
+  "tagline": string,                // <= 60 chars; dry or blunt, NOT a poetic vibe summary
   "handleSuggestions": string[3],   // lowercase instagram handles, no spaces or @
   "niche": string,
-  "bio": string,                    // <= 150 chars instagram bio with light emoji
+  "bio": string,                    // <= 150 chars; mundane/specific, max 1 emoji — see voice rules
   "personality": string,            // 2-3 sentences, first impression of who they are
   "appearance": string,             // vivid physical description for image generation; describe a conventionally attractive, photogenic person (symmetrical features, clear skin, flattering hair, appealing figure, tasteful style) while still feeling like a real, believable individual — not generic or plastic
   "aesthetic": string,              // visual mood: lighting, palette, vibe
@@ -318,7 +321,7 @@ Return JSON with this exact shape:
   "typicalSettings": string[5],     // 5 realistic places she'd post from (varied; all on-brand for the niche, e.g. a gym girl: different gym, home kitchen, park run — NOT random unrelated locations)
   "typicalOutfits": string[4],      // 4 realistic outfits she'd wear in posts (all on-brand; must make sense in the settings above)
   "samplePosts": [                  // 3 concrete posts this character would publish
-    { "hook": string, "caption": string }
+    { "hook": string, "caption": string }  // captions: one thought/moment, not a niche mission statement
   ],
   "postingStrategy": {
     "postsPerDay": number,
@@ -380,6 +383,29 @@ const POST_ANGLES = [
 
 const POST_TIMES = ["morning", "midday", "afternoon", "evening"];
 
+// Shared rules so bios/captions show vibe indirectly instead of summarizing the brief.
+const HUMAN_COPY_RULES = `
+Voice rules (bios, taglines, sample posts, and captions — CRITICAL):
+- The user's brief is INTERNAL context. Public copy must NEVER read like a polished
+  summary of that brief or a mood board turned into sentences.
+- Show personality through specifics (a habit, complaint, craving, inside joke, dry
+  aside) — NOT through aesthetic adjectives, niche slogans, or "brand voice" poetry.
+- Real creators sound blunt, messy, or accidentally funny more often than poetic.
+  Understatement beats manifesto energy.
+- Do NOT write Instagram-template bios: no motivational poster lines ("building X one
+  Y at a time"), no stacked aesthetic nouns (boots, rings, obsidian, moon metaphors),
+  no fake editorial schedules ("archive updates every Sunday") unless truly relevant.
+- Do NOT name or describe the vibe/niche/aesthetic directly (no "alt girl energy",
+  "fitness journey", "dark feminine", "wellness warrior", etc.).
+- Max ONE emoji in bios. Captions: emoji optional, never as decoration on every line.
+- Bad bio: "Dressing like the moon is always full. 🌙 Heavy boots, silver rings..."
+- Bad bio: "Building a stronger me, one rep at a time 💪"
+- Bad caption: "Reminder that progress > perfection. Every rep counts on this journey."
+- Good bio: "berlin. bad at texting back. thrifted everything"
+- Good bio: "meal prep sundays only. nc"
+- Good caption: "skipped cardio again lol anyway this set felt ok"
+`.trim();
+
 const SLANG_POOL = [
   "fr", "lowk", "lowkey", "highkey", "omg", "tbh", "ngl", "istg", "idk", "imo",
   "no cap", "cap", "deadass", "bet", "periodt", "literally", "slay", "ate",
@@ -420,10 +446,9 @@ function postContextFromPersona(persona) {
   const { settings, outfits } = sceneOptionsFromPersona(persona);
   return {
     displayName: persona?.displayName,
-    niche: persona?.niche,
+    niche: persona?.niche, // scene/outfit logic only — do not echo in caption
     personality: persona?.personality,
-    bio: persona?.bio,
-    contentPillars: persona?.contentPillars,
+    bioVoiceReference: persona?.bio, // tone only — do not paraphrase or reuse lines
     typicalSettings: settings,
     typicalOutfits: outfits,
   };
@@ -453,10 +478,10 @@ export async function generatePostContent({ persona }) {
   const hasSceneLists = ctx.typicalSettings.length > 0 && ctx.typicalOutfits.length > 0;
 
   const system =
-    "You write authentic, natural-sounding Instagram posts for a specific AI influencer persona. " +
-    "You sound like a real person, not a marketer: varied sentence length, the occasional emoji, " +
-    "no robotic templates, no hashtag stuffing inside the caption body. " +
-    "Every post you write must feel different from the last. Respond with strict JSON only.";
+    "You write Instagram posts for a specific creator persona. " +
+    "Sound like a real person posting a single moment — not a brand summarizing its niche. " +
+    "Varied sentence length, occasional emoji, no robotic templates, no hashtag stuffing in the caption body. " +
+    "Every post must feel different from the last. Respond with strict JSON only.";
 
   const sceneRules = hasSceneLists
     ? `- For the photo scene, pick ONE setting from typicalSettings and ONE outfit from typicalOutfits.
@@ -467,8 +492,10 @@ export async function generatePostContent({ persona }) {
 
   const prompt = `Write ONE brand-new Instagram post for this persona.
 
-Persona (for voice and scene — do NOT invent physical appearance):
+Persona (voice + scene — do NOT invent physical appearance; niche is for scene/outfit only):
 ${JSON.stringify(ctx, null, 2)}
+
+${HUMAN_COPY_RULES}
 
 Constraints for THIS post (caption variety only):
 - Creative angle: ${angle}
@@ -477,7 +504,11 @@ Constraints for THIS post (caption variety only):
 - Slang for this caption: incorporate "${slangA}" and "${slangB}" (use each once). They must fit the caption's mood and sound like how this persona actually talks — casual and human, never forced, awkward, or try-hard. Do not stack them back-to-back or turn the caption into a meme; spread them where they naturally belong in the thought.
 
 Rules:
-- The caption must sound human and natural, on-brand for the persona's voice and niche.
+- The caption is ONE casual thought about THIS photo (what happened, a complaint, a tiny win,
+  something dumb/funny) — NOT a mission statement about the niche.
+- Do NOT open with inspirational hooks ("reminder that…", "progress over perfection",
+  "here's your sign to…", "building X one Y at a time").
+- The caption must sound human and natural, on-brand for the persona's voice.
 - Caption length: 400 characters or fewer (including spaces and emoji).
 - Do NOT use em dashes (—) in the caption; use a comma, period, or "..." instead.
 - Each caption must include exactly TWO casual slang terms (the pair assigned above, or close equivalents if one truly clashes with the mood — still two total). Vary phrasing across posts; never reuse the same pair or the same opening every time. The slang should match the caption tone (funny, tired, excited, dry, etc.), not fight it.
