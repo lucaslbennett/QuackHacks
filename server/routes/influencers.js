@@ -213,7 +213,10 @@ router.post(
 // per-post settings; defaults to instagram.
 router.post(
   "/:id/postiz",
+  requireAuth,
   asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
     const { integrationId, platform } = req.body;
     if (!integrationId) {
       return res.status(400).json({ ok: false, error: "integrationId is required" });

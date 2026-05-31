@@ -2,15 +2,19 @@ import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
 import * as fal from "../services/fal.js";
+import * as postiz from "../services/postiz.js";
 import { requireAuth, optionalAuth } from "../lib/auth.js";
 import { pick, FIRST_NAMES, LAST_NAMES } from "../lib/util.js";
 
 const router = Router();
 
 const asyncH = (fn) => (req, res) =>
-  Promise.resolve(fn(req, res)).catch((err) =>
-    res.status(500).json({ ok: false, error: err.message })
-  );
+  Promise.resolve(fn(req, res)).catch((err) => {
+    console.error(`[generate] ${req.method} ${req.originalUrl} failed:`, err);
+    res
+      .status(500)
+      .json({ ok: false, error: err?.message || String(err) || "internal error" });
+  });
 
 // Looks up an onboarding answer by a keyword in its question text. Answers are
 // keyed by the full question string the chat asked.
@@ -292,6 +296,137 @@ router.post(
       altText: post.altText,
       imagePrompt,
       copyText,
+    });
+  })
+);
+
+// Auth required: generate a post image for an influencer and publish it through
+// Postiz to that influencer's linked channel — Postiz owns the publishing. The
+// photo is rendered with fal (Postiz has no text-to-image), the caption +
+// hashtags are built from the persona (no LLM), and Postiz uploads the image and
+// creates the post immediately ("now"). The published post is persisted to the
+// influencer's content history and posts table, and the response includes a
+// link to the live channel (e.g. the Instagram profile).
+router.post(
+  "/post-postiz",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const influencerId = req.body.influencerId;
+    if (!influencerId) {
+      return res.status(400).json({ ok: false, error: "influencerId is required" });
+    }
+    if (!postiz.isConfigured()) {
+      return res
+        .status(503)
+        .json({ ok: false, error: "Postiz is not configured (POSTIZ_API_KEY)" });
+    }
+    if (!fal.isConfigured()) {
+      return res
+        .status(503)
+        .json({ ok: false, error: "image generation is not configured (FAL_KEY)" });
+    }
+
+    // Ownership: only the influencer's owner may publish on its behalf.
+    const inf = await repo.influencers.get(influencerId);
+    if (!inf) return res.status(404).json({ ok: false, error: "influencer not found" });
+    if (inf.user_id && inf.user_id !== req.user.id) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+    if (!inf.postiz_integration_id) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "This influencer isn't linked to a Postiz channel yet. Connect a channel before publishing.",
+      });
+    }
+
+    const persona = inf.persona && typeof inf.persona === "object" ? inf.persona : {};
+    const platform = inf.postiz_platform || "instagram";
+
+    // 1) Build caption + hashtags + an image scene straight from the persona
+    //    (no LLM — Postiz/this flow owns the text).
+    const built = buildPostFromPersona({
+      ...persona,
+      displayName: persona.displayName || inf.name,
+      niche: persona.niche || inf.niche,
+    });
+
+    // 2) Render the photo with fal. fal returns a public CDN url that Postiz can
+    //    fetch directly, so we hand that url to upload-from-url (no PUBLIC_BASE_URL
+    //    round-trip needed).
+    const image = await fal.generateNanoBananaImage({
+      prompt: built.imagePrompt,
+      influencerId,
+      label: "post",
+    });
+
+    const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
+    const caption = [built.caption, hashtagLine].filter(Boolean).join("\n\n");
+
+    // 3) Hand everything to Postiz: upload the image, then publish now.
+    const media = await postiz.uploadFromUrl(image.url);
+    const { postId } = await postiz.schedulePost({
+      integrationId: inf.postiz_integration_id,
+      identifier: platform,
+      content: caption,
+      date: new Date(),
+      media: [media],
+      type: "now",
+    });
+
+    // 4) Resolve a deep link to the live channel (e.g. the IG profile) so the UI
+    //    can show "see it on Instagram".
+    const integration = await postiz.getIntegration(inf.postiz_integration_id).catch(() => null);
+    const channelUrl = postiz.profileUrl(integration);
+
+    // 5) Persist to the influencer's content history + record the published post.
+    let contentId = null;
+    try {
+      const item = await repo.content.create({
+        influencerId,
+        topic: built.title || null,
+        status: "posted",
+      });
+      await repo.content.update(item.id, {
+        title: built.title || null,
+        caption: built.caption,
+        hashtags: built.hashtags || [],
+        image_paths: [image.url],
+        meta: {
+          altText: built.altText,
+          imagePrompt: built.imagePrompt,
+          source: "postiz-publish",
+          postizPostId: postId,
+          platform,
+        },
+      });
+      contentId = item.id;
+      await repo.posts.createPublished({
+        influencerId,
+        contentId,
+        postizPostId: postId,
+        caption: built.caption,
+        platform,
+        url: channelUrl,
+      });
+    } catch (err) {
+      console.error("[generate] post-postiz persist failed:", err);
+      // Non-fatal: the post is already live on Postiz; still return success.
+    }
+
+    res.json({
+      ok: true,
+      published: true,
+      contentId,
+      postizPostId: postId,
+      platform,
+      imageUrl: image.url,
+      caption: built.caption,
+      hashtags: built.hashtags,
+      hashtagLine,
+      altText: built.altText,
+      channelUrl,
+      channelName: integration?.name || integration?.profile || null,
     });
   })
 );

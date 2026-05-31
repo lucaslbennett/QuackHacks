@@ -52,14 +52,27 @@ cp .env.example .env   # fill in keys + a local DATABASE_URL
 # 3. Migrate the schema
 npm run migrate
 
-# 4. Run the API and the web dev server in TWO SEPARATE terminals:
-#    Terminal 1 — backend API (port 3000)
-npm run dev
-#    Terminal 2 — web dev server (port 5173, proxies /api)
-npm run web:dev
+# 4. Start everything (backend :3000 + Vite :5173) with one command:
+./dev.sh               # or: npm run dev:all
 ```
 
-Open http://localhost:5173. The app degrades gracefully: `/api/status` shows which
+`./dev.sh` clears stale caches, starts the backend, waits until it's actually up,
+then starts the Vite dev server with a forced-fresh build and health-checks the
+proxy. Press **Ctrl+C** once to stop both. Useful flags:
+
+```bash
+./dev.sh --install     # run npm installs first (fresh clone)
+./dev.sh --no-clean    # faster restart, keep caches
+./dev.sh --backend     # API only       ./dev.sh --frontend   # web only
+./dev.sh --help        # all options
+```
+
+> Prefer two terminals? Run `npm run dev` (backend) and `npm run web:dev`
+> (frontend) separately instead.
+
+Open **http://localhost:5173** — the Vite dev server proxies `/api` and `/media`
+to the backend, so always use this URL (not `:3000`) to avoid the stale
+production bundle. The app degrades gracefully: `/api/status` shows which
 integrations are configured, and unconfigured services simply error on use.
 
 ### Reloading while you work

@@ -183,6 +183,22 @@ export const posts = {
         scheduledAt || null,
       ]
     ),
+  // Records a post that was published immediately through Postiz. Stores the
+  // Postiz post id + platform alongside a public profile/post URL so the
+  // dashboard can deep-link to the live account.
+  createPublished: ({ influencerId, contentId, postizPostId, caption, platform, url }) =>
+    one(
+      `INSERT INTO posts (influencer_id, content_id, postiz_post_id, caption, platform, ig_post_url)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        influencerId,
+        contentId || null,
+        postizPostId || null,
+        caption || null,
+        platform || null,
+        url || null,
+      ]
+    ),
   listFor: (influencerId) =>
     many(`SELECT * FROM posts WHERE influencer_id=$1 ORDER BY posted_at DESC`, [influencerId]),
 };

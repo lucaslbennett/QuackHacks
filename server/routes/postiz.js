@@ -57,4 +57,19 @@ router.get(
   })
 );
 
+// Generate a Postiz OAuth URL so the user can connect a new channel without
+// leaving the app. Defaults to Instagram. The client opens the returned URL
+// (popup/new tab), the user authorizes, and the new channel then shows up in
+// GET /integrations. Pass ?refresh=<integrationId> to refresh an existing one.
+router.get(
+  "/connect-url",
+  asyncH(async (req, res) => {
+    if (!requireConfigured(res)) return;
+    const platform = String(req.query.platform || "instagram").trim();
+    const refresh = req.query.refresh ? String(req.query.refresh) : undefined;
+    const url = await postiz.getConnectUrl(platform, { refresh });
+    res.json({ ok: true, url, platform });
+  })
+);
+
 export default router;

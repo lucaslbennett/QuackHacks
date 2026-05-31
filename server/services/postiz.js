@@ -51,6 +51,57 @@ export async function listIntegrations() {
   return Array.isArray(data) ? data : data?.integrations || [];
 }
 
+// Looks up a single connected channel by its Postiz integration id. Returns the
+// raw integration object (id, name, identifier, profile, picture, ...) or null
+// if no channel with that id is connected.
+export async function getIntegration(integrationId) {
+  if (!integrationId) return null;
+  const list = await listIntegrations();
+  return list.find((i) => String(i.id) === String(integrationId)) || null;
+}
+
+// Best-effort public URL for a channel's profile, used to deep-link the user to
+// the live account (e.g. the influencer's Instagram page). Postiz exposes the
+// channel's handle as `profile`; we map it to the platform's profile URL.
+export function profileUrl(integration) {
+  if (!integration) return null;
+  const platform = String(integration.identifier || "").split("-")[0];
+  const handle = String(integration.profile || integration.name || "")
+    .trim()
+    .replace(/^@/, "")
+    .replace(/^https?:\/\/[^/]+\//, "")
+    .replace(/\/+$/, "");
+  if (!handle) return null;
+  switch (platform) {
+    case "instagram":
+      return `https://www.instagram.com/${handle}/`;
+    case "x":
+    case "twitter":
+      return `https://x.com/${handle}`;
+    case "tiktok":
+      return `https://www.tiktok.com/@${handle}`;
+    case "youtube":
+      return `https://www.youtube.com/@${handle}`;
+    default:
+      return null;
+  }
+}
+
+// Generates a Postiz OAuth authorization URL for connecting a new channel of
+// the given platform (e.g. "instagram", "instagram-standalone", "x"). The user
+// is redirected there to authorize; Postiz completes the OAuth and the channel
+// then appears in listIntegrations(). Pass `refresh` (an existing integration
+// id) to refresh that connection's token instead of creating a new one. Only
+// OAuth-based platforms are supported (400 otherwise).
+export async function getConnectUrl(platform, { refresh } = {}) {
+  const id = encodeURIComponent(String(platform || "").trim());
+  if (!id) throw new Error("platform is required");
+  const qs = refresh ? `?refresh=${encodeURIComponent(refresh)}` : "";
+  const data = await postizFetch(`/social/${id}${qs}`);
+  if (!data?.url) throw new Error("Postiz returned no OAuth URL");
+  return data.url;
+}
+
 // Asks Postiz for the next free posting slot for a channel (honours the
 // account's scheduling preferences). Returns an ISO date string or null.
 export async function findNextSlot(integrationId) {

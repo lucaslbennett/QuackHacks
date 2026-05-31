@@ -13,6 +13,9 @@ export interface Influencer {
   persona: Partial<Character>;
   image_url: string | null;
   posts_per_day: number;
+  // Linked Postiz channel (null until connected); platform drives the post.
+  postiz_integration_id: string | null;
+  postiz_platform: string | null;
   created_at: string;
   // Present on the list summary.
   accountStatus?: string | null;
@@ -87,6 +90,29 @@ export async function listMyInfluencers(): Promise<Influencer[]> {
   if (!res.ok) return [];
   const data = await res.json().catch(() => ({ ok: false }));
   return data.ok ? (data.influencers as Influencer[]) : [];
+}
+
+// Auth required: link an influencer to a connected Postiz channel so its posts
+// publish to that account. `platform` (instagram | x | tiktok | ...) drives the
+// per-post settings; defaults to instagram.
+export async function linkPostizChannel(
+  influencerId: string,
+  integrationId: string,
+  platform = "instagram",
+): Promise<{ postiz_integration_id: string; postiz_platform: string }> {
+  const res = await fetch(`/api/influencers/${influencerId}/postiz`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ integrationId, platform }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Failed to link channel (${res.status})`);
+  }
+  return {
+    postiz_integration_id: data.influencer.postiz_integration_id,
+    postiz_platform: data.influencer.postiz_platform,
+  };
 }
 
 // Auth required: full detail for one influencer (account, content, metrics).

@@ -16,6 +16,23 @@ export interface Generation {
   persona?: Partial<Character>;
 }
 
+// A post that was generated and published live through Postiz.
+export interface PublishedPost {
+  imageUrl: string;
+  caption: string;
+  hashtags: string[];
+  hashtagLine: string;
+  altText: string;
+  // The Postiz post id for the published post.
+  postizPostId: string | null;
+  platform: string;
+  // Deep link to the live channel (e.g. the Instagram profile), when resolvable.
+  channelUrl: string | null;
+  channelName: string | null;
+  // Set when the post was persisted to the influencer's content history.
+  contentId: string | null;
+}
+
 // A freshly generated, ready-to-post Instagram post for an influencer.
 export interface GeneratedPost {
   imageUrl: string;
@@ -132,6 +149,36 @@ export async function generatePost(input: {
     altText: data.altText ?? "",
     imagePrompt: data.imagePrompt ?? "",
     copyText: data.copyText ?? "",
+    contentId: data.contentId ?? null,
+  };
+}
+
+// Auth required: generate a post image (fal) + persona caption for an
+// influencer and publish it immediately through that influencer's linked Postiz
+// channel. Postiz owns the publishing; the response describes the live post and
+// a link to the channel (e.g. the Instagram profile).
+export async function publishViaPostiz(
+  influencerId: string,
+): Promise<PublishedPost> {
+  const res = await fetch("/api/generate/post-postiz", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ influencerId }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.imageUrl) {
+    throw new Error(data.error || `Publish failed (${res.status})`);
+  }
+  return {
+    imageUrl: data.imageUrl,
+    caption: data.caption ?? "",
+    hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
+    hashtagLine: data.hashtagLine ?? "",
+    altText: data.altText ?? "",
+    postizPostId: data.postizPostId ?? null,
+    platform: data.platform ?? "instagram",
+    channelUrl: data.channelUrl ?? null,
+    channelName: data.channelName ?? null,
     contentId: data.contentId ?? null,
   };
 }
