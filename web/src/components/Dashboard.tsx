@@ -131,9 +131,6 @@ export default function Dashboard() {
                     alt={g.prompt}
                     className="aspect-square w-full object-cover"
                   />
-                  <p className="line-clamp-2 px-3 py-2 text-[12px] text-black/60">
-                    {g.prompt}
-                  </p>
                 </div>
               ))}
             </div>
