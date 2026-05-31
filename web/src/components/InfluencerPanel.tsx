@@ -32,6 +32,7 @@ import {
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
 import InfluencerCustomizeTab from "./InfluencerCustomizeTab";
+import BuildAccountModal from "./BuildAccountModal";
 import PostingScheduleModal from "./PostingScheduleModal";
 import type { PostingScheduleSummary } from "../lib/influencers";
 import { postTimeCaption, latestAutopilotContent, autopilotStatusLabel, hashtagLine } from "../lib/postTime";
@@ -1149,8 +1150,6 @@ function AutopilotPostHero({
 const IG_STANDALONE = "instagram-standalone";
 const IG_FB_LINKED = "instagram";
 const IG_SIGNUP_DIRECT_URL = "https://www.instagram.com/accounts/emailsignup/";
-// Logged-in sessions skip the signup page — sign out in the new tab first, then land on sign-up.
-const IG_SIGNUP_LOGOUT_URL = `https://www.instagram.com/accounts/logout/?next=${encodeURIComponent("/accounts/emailsignup/")}`;
 
 function AccountTab({
   account,
@@ -1171,6 +1170,8 @@ function AccountTab({
   const [refreshing, setRefreshing] = useState(false);
   // "Connecting…" while we wait for the OAuth popup + a new channel to appear.
   const [connecting, setConnecting] = useState(false);
+  // Guided in-app "build a new Instagram account" flow.
+  const [building, setBuilding] = useState(false);
 
   const linkedId = influencer.postiz_integration_id;
 
@@ -1531,17 +1532,15 @@ function AccountTab({
             </button>
             <button
               type="button"
-              onClick={() =>
-                window.open(IG_SIGNUP_LOGOUT_URL, "_blank", "noopener,noreferrer")
-              }
+              onClick={() => setBuilding(true)}
               className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-black/15 px-5 py-3 text-[14px] font-medium text-black/80 transition hover:bg-black/[0.04]"
             >
               Create a new Instagram account
             </button>
             <p className="mt-2 text-center text-[12px] leading-relaxed text-black/40">
-              Opens sign-up in a new tab. If you&apos;re already signed in on Instagram,
-              that tab signs out first so you see the registration form. To keep your
-              current session, use a private/incognito window and open{" "}
+              Generates the email, username and password for you, autofills the
+              sign-up form, and reads the verification code automatically — you
+              just clear the human check. Prefer to do it yourself? Open{" "}
               <a
                 href={IG_SIGNUP_DIRECT_URL}
                 target="_blank"
@@ -1591,6 +1590,25 @@ function AccountTab({
         <p className="mt-4 text-[12px] text-black/40">
           Auto-created account on file: @{account.username}
         </p>
+      )}
+
+      {building && (
+        <BuildAccountModal
+          input={{
+            name: influencer.name,
+            niche: influencer.niche,
+            persona: {
+              displayName: influencer.persona?.displayName,
+              handleSuggestions: influencer.persona?.handleSuggestions,
+            },
+          }}
+          onClose={() => {
+            setBuilding(false);
+            // A freshly-created account is connected via Postiz next, so refresh
+            // the channel list so it shows up the moment they link it.
+            load();
+          }}
+        />
       )}
     </section>
   );

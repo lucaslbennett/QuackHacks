@@ -6,6 +6,7 @@ import { withStagehand } from "./stagehand.js";
 import * as capsolver from "./capsolver.js";
 import * as gemini from "../gemini.js";
 import { waitForEmailCode, generateEmail } from "../verification.js";
+import { freshUsername, randomPassword, pickBirthday } from "../identity.js";
 import { sleep, randomInt, pick } from "../../lib/util.js";
 import { createLogger } from "../../lib/logger.js";
 
@@ -54,50 +55,10 @@ function makeStepCapture(page, debugDir) {
   };
 }
 
-// Builds a FRESH, realistic-looking username. Every call must yield a NEW handle
-// — even back-to-back runs on the same persona base — or Instagram rejects the
-// signup as "username taken" (and reusing a handle we already registered is an
-// obvious automation tell). We therefore combine the cleaned persona base with a
-// TIME-SEEDED suffix (the tail of the epoch-ms, which changes every run and so
-// can't collide) plus a small random spread, and vary the join style so handles
-// read like real people's rather than an obviously-templated sequence.
-function buildUsername(base) {
-  const clean = (base || "creator")
-    .toLowerCase()
-    .replace(/[^a-z0-9._]/g, "")
-    .replace(/[._]{2,}/g, ".") // collapse doubled separators
-    .replace(/^[._]+|[._]+$/g, "") // trim leading/trailing separators
-    .slice(0, 15) || "creator";
-  // 1 random digit + the last 5 digits of the epoch (ms) ⇒ unique per run (two
-  // signups won't land on the same millisecond) while still reading like the
-  // very common "name12345" handle.
-  const suffix = `${randomInt(1, 9)}${String(Date.now()).slice(-5)}`;
-  const sep = pick(["", "", "", "_", "."]); // mostly none, occasionally _ or .
-  return `${clean}${sep}${suffix}`.slice(0, 30);
-}
-
-// Picks a (randomized) persona handle base and builds a brand-new username from
-// it. Randomizing WHICH suggestion we start from — not just the suffix — gives
-// retries genuinely different-looking handles instead of the same stem twice.
-function freshUsername(persona) {
-  const candidates = [
-    ...(Array.isArray(persona?.handleSuggestions) ? persona.handleSuggestions : []),
-    persona?.displayName,
-  ].filter(Boolean);
-  return buildUsername(candidates.length ? pick(candidates) : "creator");
-}
-
-function randomPassword() {
-  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let p = "";
-  for (let i = 0; i < 14; i++) p += chars[Math.floor(Math.random() * chars.length)];
-  return `${p}!7`;
-}
-
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
+// Identity generation (username/password/birthday) lives in
+// services/identity.js so the user-driven build-account flow can reuse the exact
+// same logic without loading this Stagehand-heavy module. `freshUsername`,
+// `randomPassword`, and `pickBirthday` are imported at the top of this file.
 
 // --- Fast interaction helpers ------------------------------------------------
 // Each stagehand.act()/extract() call is a full LLM round-trip (~2-5s). For the
@@ -1930,25 +1891,6 @@ async function usernameRejected(page) {
       return patterns.some((re) => re.test(t));
     })
     .catch(() => false);
-}
-
-// Picks a concrete, realistic DOB making the user between minAge and maxAge.
-// Returns the numeric parts plus the full month name, since IG's Month dropdown
-// uses names ("March") while Day/Year use numbers.
-function pickBirthday({ minAge = 24, maxAge = 33 } = {}) {
-  const now = new Date();
-  const age = randomInt(minAge, maxAge);
-  const year = now.getFullYear() - age;
-  const monthIndex = randomInt(0, 11);
-  // Keep day <= 28 so it's always valid regardless of month/leap year.
-  const day = randomInt(1, 28);
-  return {
-    year,
-    monthIndex,
-    monthName: MONTH_NAMES[monthIndex],
-    monthNumber: monthIndex + 1,
-    day,
-  };
 }
 
 // Instagram's signup birthday controls are CUSTOM ARIA comboboxes, confirmed

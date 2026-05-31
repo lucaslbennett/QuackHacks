@@ -615,6 +615,60 @@ export async function waitForEmailCode({
   throw new Error("Timed out waiting for email verification code");
 }
 
+// One-shot, NON-blocking check for a verification code. Unlike waitForEmailCode
+// (which loops until a deadline) this does a SINGLE provider read and returns
+// right away: `{ code, receivedAt }` when found, else null. It's the building
+// block for a client-polled endpoint — the user watches their build screen for
+// the code we caught while they complete Instagram's signup in their own
+// browser. Never throws: a provider hiccup just yields null so the client keeps
+// polling on its own cadence. `receivedAfter` (epoch ms) scopes which messages
+// still count as fresh (defaults to ~30 min ago).
+export async function peekEmailCode({ influencerId, to, receivedAfter } = {}) {
+  const provider = config.verification.emailProvider;
+  const since = typeof receivedAfter === "number" ? receivedAfter : Date.now() - 30 * 60 * 1000;
+
+  // A code typed into the dashboard always wins (covers the "manual" provider
+  // and any address the auto-readers can't see).
+  if (influencerId) {
+    const manual = takeManualCode(influencerId, "email");
+    if (manual) return { code: manual, receivedAt: Date.now() };
+  }
+
+  try {
+    if (provider === "maildotm") {
+      return await fetchEmailCodeMailtm({ to, receivedAfter: since });
+    }
+    if (provider === "imap") {
+      const { host, user, pass, mailbox } = config.verification.imap;
+      if (!host || !user || !pass) return null;
+      let ImapFlow;
+      try {
+        ({ ImapFlow } = await import("imapflow"));
+      } catch {
+        return null;
+      }
+      let client = null;
+      try {
+        client = await imapConnect(ImapFlow);
+        return await withTimeout(
+          imapFindCode(client, { to, receivedAfter: since, mailbox }),
+          20000,
+          "IMAP search"
+        );
+      } finally {
+        if (client) await client.logout().catch(() => {});
+      }
+    }
+    if (provider === "mailosaur" && config.verification.emailApiKey) {
+      const code = await fetchEmailCodeMailosaur({ to, receivedAfter: since });
+      if (code) return { code, receivedAt: Date.now() };
+    }
+  } catch (err) {
+    log.warn("peekEmailCode error:", err.message);
+  }
+  return null;
+}
+
 // Diagnostic snapshot of what's CURRENTLY visible in `address`'s inbox for the
 // configured provider — powers `npm run probe:email`. Lets you confirm, after a
 // signup attempt, whether Instagram actually delivered a code (vs. the address

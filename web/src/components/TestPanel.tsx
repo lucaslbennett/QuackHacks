@@ -9,6 +9,7 @@ import {
   type SpawnRun,
   type StepState,
 } from "../lib/testApi";
+import BuildAccountModal from "./BuildAccountModal";
 
 function Dot({ ok }: { ok: boolean }) {
   return (
@@ -56,6 +57,7 @@ export default function TestPanel() {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [browser, setBrowser] = useState<BrowserUseResult | null>(null);
   const [run, setRun] = useState<SpawnRun | null>(null);
+  const [building, setBuilding] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -228,6 +230,13 @@ export default function TestPanel() {
         <div className="space-y-2">
           <button
             type="button"
+            onClick={() => setBuilding(true)}
+            className="w-full rounded-lg bg-gradient-to-r from-[#8a3ab9] via-[#e95950] to-[#fccc63] px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          >
+            Build Account (guided) ✦
+          </button>
+          <button
+            type="button"
             onClick={handlePersona}
             disabled={busy !== null || !igConfigured}
             className="w-full rounded-lg border border-black/20 px-3 py-2 text-[13px] font-medium transition-colors hover:bg-black hover:text-white disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-black"
@@ -246,9 +255,9 @@ export default function TestPanel() {
             type="button"
             onClick={handleSpawn}
             disabled={busy !== null || !igConfigured || !bbConfigured}
-            className="w-full rounded-lg bg-black px-3 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+            className="w-full rounded-lg border border-black/20 px-3 py-2 text-[13px] font-medium transition-colors hover:bg-black hover:text-white disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-black"
           >
-            {busy === "spawn" ? "Running…" : "Launch Session + Generate User"}
+            {busy === "spawn" ? "Running…" : "Automated spawn (legacy, often blocked)"}
           </button>
         </div>
 
@@ -347,6 +356,22 @@ export default function TestPanel() {
           </div>
         )}
       </div>
+
+      {building && (
+        <BuildAccountModal
+          input={{
+            name: inputs.name,
+            niche: inputs.niche,
+            persona: persona
+              ? {
+                  displayName: persona.displayName,
+                  handleSuggestions: persona.handleSuggestions,
+                }
+              : null,
+          }}
+          onClose={() => setBuilding(false)}
+        />
+      )}
     </div>
   );
 }

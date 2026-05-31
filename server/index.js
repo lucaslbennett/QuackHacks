@@ -12,6 +12,7 @@ import { startScheduler } from "./jobs/scheduler.js";
 
 import systemRoutes from "./routes/system.js";
 import influencerRoutes from "./routes/influencers.js";
+import accountRoutes from "./routes/accounts.js";
 import authRoutes from "./routes/auth.js";
 import generateRoutes from "./routes/generate.js";
 import postizRoutes from "./routes/postiz.js";
@@ -35,6 +36,7 @@ app.use("/api", systemRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/generate", generateRoutes);
 app.use("/api/influencers", influencerRoutes);
+app.use("/api/account", accountRoutes);
 app.use("/api/postiz", postizRoutes);
 
 // Serve the built dashboard if present; otherwise a minimal landing page.
