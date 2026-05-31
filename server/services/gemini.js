@@ -380,7 +380,24 @@ const POST_ANGLES = [
 
 const POST_TIMES = ["morning", "midday", "afternoon", "evening"];
 
+const SLANG_POOL = [
+  "fr", "lowk", "lowkey", "highkey", "omg", "tbh", "ngl", "istg", "idk", "imo",
+  "no cap", "cap", "deadass", "bet", "periodt", "literally", "slay", "ate",
+  "it's giving", "vibes", "iconic", "help", "crying", "sheesh", "ugh", "lol",
+  "lmao", "smh", "rn", "nvm", "obvi", "def", "probs", "kinda", "legit", "based",
+  "delulu", "sus", "pls", "icymi", "iykyk", "im dead", "so real", "valid",
+];
+
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+function pickTwoSlang(pool) {
+  if (pool.length === 0) return [];
+  if (pool.length === 1) return [pool[0], pool[0]];
+  const first = pickRandom(pool);
+  let second = pickRandom(pool);
+  while (second === first) second = pickRandom(pool);
+  return [first, second];
+}
 
 // Pulls the on-brand settings/outfits stored on the persona (onboarding or clone).
 function sceneOptionsFromPersona(persona) {
@@ -431,6 +448,7 @@ export async function generatePostContent({ persona }) {
   const angle = pickRandom(POST_ANGLES);
   const timeOfDay = pickRandom(POST_TIMES);
   const seed = Math.random().toString(36).slice(2, 8);
+  const [slangA, slangB] = pickTwoSlang(SLANG_POOL);
   const ctx = postContextFromPersona(persona || {});
   const hasSceneLists = ctx.typicalSettings.length > 0 && ctx.typicalOutfits.length > 0;
 
@@ -456,9 +474,13 @@ Constraints for THIS post (caption variety only):
 - Creative angle: ${angle}
 - Time of day (caption mood only, NOT image lighting): ${timeOfDay}
 - Variety seed (ignore meaning, just use it to be different): ${seed}
+- Slang for this caption: incorporate "${slangA}" and "${slangB}" (use each once). They must fit the caption's mood and sound like how this persona actually talks — casual and human, never forced, awkward, or try-hard. Do not stack them back-to-back or turn the caption into a meme; spread them where they naturally belong in the thought.
 
 Rules:
 - The caption must sound human and natural, on-brand for the persona's voice and niche.
+- Caption length: 400 characters or fewer (including spaces and emoji).
+- Do NOT use em dashes (—) in the caption; use a comma, period, or "..." instead.
+- Each caption must include exactly TWO casual slang terms (the pair assigned above, or close equivalents if one truly clashes with the mood — still two total). Vary phrasing across posts; never reuse the same pair or the same opening every time. The slang should match the caption tone (funny, tired, excited, dry, etc.), not fight it.
 - Do NOT reuse the persona's sample posts verbatim; write something new.
 - Write FOR the persona's audience, but NEVER print audience/demographic labels
   (e.g. "Gen Z", "millennials", "busy professionals", "entrepreneurs") in the
@@ -472,7 +494,7 @@ ${sceneRules}
 
 Return JSON with this exact shape:
 {
-  "caption": string,
+  "caption": string,            // max 400 chars, no em dashes (—)
   "hashtags": string[10],
   "setting": string,
   "outfit": string,
