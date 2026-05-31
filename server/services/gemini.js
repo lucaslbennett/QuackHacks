@@ -315,6 +315,8 @@ Return JSON with this exact shape:
   "aesthetic": string,              // visual mood: lighting, palette, vibe
   "contentPillars": string[4],      // recurring topics they post about
   "contentFormats": string[3],      // e.g. "talking-head reels", "day-in-the-life vlogs"
+  "typicalSettings": string[5],     // 5 realistic places she'd post from (varied; all on-brand for the niche, e.g. a gym girl: different gym, home kitchen, park run — NOT random unrelated locations)
+  "typicalOutfits": string[4],      // 4 realistic outfits she'd wear in posts (all on-brand; must make sense in the settings above)
   "samplePosts": [                  // 3 concrete posts this character would publish
     { "hook": string, "caption": string }
   ],
@@ -376,9 +378,48 @@ const POST_ANGLES = [
   "a 'currently obsessed with' recommendation",
 ];
 
-const POST_TIMES = ["morning", "midday", "golden hour", "late night"];
+const POST_TIMES = ["morning", "midday", "afternoon", "evening"];
 
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// Pulls the on-brand settings/outfits stored on the persona (onboarding or clone).
+function sceneOptionsFromPersona(persona) {
+  const settings = (
+    persona?.typicalSettings ||
+    persona?.visualStyle?.settings ||
+    []
+  )
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  const rawOutfits = persona?.typicalOutfits || persona?.visualStyle?.wardrobe;
+  const outfits = (Array.isArray(rawOutfits) ? rawOutfits : rawOutfits ? [rawOutfits] : [])
+    .map((o) => String(o).trim())
+    .filter(Boolean);
+  return { settings, outfits };
+}
+
+// Slim context for post generation — voice and scene lists only, no appearance text.
+function postContextFromPersona(persona) {
+  const { settings, outfits } = sceneOptionsFromPersona(persona);
+  return {
+    displayName: persona?.displayName,
+    niche: persona?.niche,
+    personality: persona?.personality,
+    bio: persona?.bio,
+    contentPillars: persona?.contentPillars,
+    typicalSettings: settings,
+    typicalOutfits: outfits,
+  };
+}
+
+function assembleScenePrompt({ setting, outfit, action }) {
+  const parts = [
+    String(action || "").trim(),
+    setting ? `Setting: ${String(setting).trim()}` : "",
+    outfit ? `Outfit: ${String(outfit).trim()}` : "",
+  ].filter(Boolean);
+  return parts.join(". ") + (parts.length ? "." : "");
+}
 
 // Designs a fresh, natural-feeling Instagram post (caption + hashtags + image
 // prompt) for an existing persona. Deliberately high-variety: a random angle,
@@ -390,6 +431,8 @@ export async function generatePostContent({ persona }) {
   const angle = pickRandom(POST_ANGLES);
   const timeOfDay = pickRandom(POST_TIMES);
   const seed = Math.random().toString(36).slice(2, 8);
+  const ctx = postContextFromPersona(persona || {});
+  const hasSceneLists = ctx.typicalSettings.length > 0 && ctx.typicalOutfits.length > 0;
 
   const system =
     "You write authentic, natural-sounding Instagram posts for a specific AI influencer persona. " +
@@ -397,14 +440,21 @@ export async function generatePostContent({ persona }) {
     "no robotic templates, no hashtag stuffing inside the caption body. " +
     "Every post you write must feel different from the last. Respond with strict JSON only.";
 
+  const sceneRules = hasSceneLists
+    ? `- For the photo scene, pick ONE setting from typicalSettings and ONE outfit from typicalOutfits.
+- The outfit must make sense for that setting and for a ${ctx.niche || "this niche"} creator.
+- Vary the setting and outfit from post to post — do not default to the same combo every time.
+- You may describe a slight variation of a listed setting (e.g. "a different gym than usual") but stay on-brand.`
+    : `- For the photo scene, pick a setting and outfit that a real ${ctx.niche || "this niche"} creator would plausibly post from — varied, everyday, on-brand. Nothing random or off-topic (no formal gala, no costume, no location that doesn't fit the niche).`;
+
   const prompt = `Write ONE brand-new Instagram post for this persona.
 
-Persona:
-${JSON.stringify(persona || {}, null, 2)}
+Persona (for voice and scene — do NOT invent physical appearance):
+${JSON.stringify(ctx, null, 2)}
 
-Constraints for THIS post (use them to stay fresh):
+Constraints for THIS post (caption variety only):
 - Creative angle: ${angle}
-- Time of day / mood: ${timeOfDay}
+- Time of day (caption mood only, NOT image lighting): ${timeOfDay}
 - Variety seed (ignore meaning, just use it to be different): ${seed}
 
 Rules:
@@ -415,23 +465,20 @@ Rules:
   caption or hashtags. Embody the audience's tone instead of naming them. A real
   person doesn't announce who their target audience is in their own caption.
 - Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
-- Provide a vivid image generation prompt that depicts a concrete, photo-worthy
-  scene for THIS specific post (not just a portrait). Describe the SETTING, action,
-  outfit/wardrobe, mood, and framing — but do NOT redescribe the person's face,
-  facial features, or skin tone. A reference photo of the influencer is supplied
-  separately and defines their identity; restating their face/skin in words only
-  makes the image drift from the real person. Refer to them as "the person" / "her".
-- Decide whether THIS post reads best as a self-taken selfie (close, face-forward,
-  phone-in-hand) or as a wider candid scene photo of the person in their setting,
-  and set "shotType" accordingly.
+${sceneRules}
+- Describe what the person is DOING in the photo (action/pose). Refer to them as "the person" / "she" — never describe face, skin tone, hair, or body.
+- A reference photo defines what she looks like; your scene fields define only where she is, what she wears, and what she's doing.
+- shotType: "selfie" for close phone-in-hand / mirror shots; "scene" for wider candid photos in the setting.
 
 Return JSON with this exact shape:
 {
-  "caption": string,            // the post caption, natural, 1-4 short paragraphs, light emoji ok, NO hashtags
-  "hashtags": string[10],       // 8-12 relevant hashtags, lowercase, WITHOUT the # symbol
-  "imagePrompt": string,        // rich scene description for the post image
-  "altText": string,            // short accessibility description of the image
-  "shotType": string            // either "selfie" or "scene"
+  "caption": string,
+  "hashtags": string[10],
+  "setting": string,
+  "outfit": string,
+  "action": string,
+  "altText": string,
+  "shotType": string
 }`;
 
   const data = await completeJson({
@@ -451,11 +498,17 @@ Return JSON with this exact shape:
   );
 
   const shotType = String(data.shotType || "").trim().toLowerCase() === "scene" ? "scene" : "selfie";
+  const imagePrompt =
+    assembleScenePrompt({
+      setting: data.setting,
+      outfit: data.outfit,
+      action: data.action,
+    }) || String(data.imagePrompt || "").trim();
 
   return {
     caption: String(data.caption || "").trim(),
     hashtags,
-    imagePrompt: String(data.imagePrompt || "").trim(),
+    imagePrompt,
     altText: String(data.altText || "").trim(),
     shotType,
     angle,

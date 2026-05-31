@@ -72,6 +72,8 @@ export interface Character {
   aesthetic: string;
   contentPillars: string[];
   contentFormats: string[];
+  typicalSettings?: string[];
+  typicalOutfits?: string[];
   samplePosts: { hook: string; caption: string }[];
   postingStrategy: {
     postsPerDay: number;
