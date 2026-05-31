@@ -231,11 +231,12 @@ export async function generatePostPreview(
 export async function publishPostPreview(
   influencerId: string,
   contentId: string,
+  edits?: { caption?: string; hashtags?: string[] },
 ): Promise<PublishedPost> {
   const res = await fetch("/api/generate/post-publish", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ influencerId, contentId }),
+    body: JSON.stringify({ influencerId, contentId, ...edits }),
   });
   const data = await res.json().catch(() => ({ ok: false }));
   if (!res.ok || data.ok === false || !data.imageUrl) {

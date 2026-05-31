@@ -521,6 +521,21 @@ function EditableHandle({
 
 /* ---------------- Content & posting ---------------- */
 
+function hashtagsToEditText(tags: string[]): string {
+  return tags.map((h) => h.replace(/^#+/, "")).join("\n");
+}
+
+function editTextToHashtags(text: string): string[] {
+  return text
+    .split(/[\n,]+/)
+    .flatMap((line) => line.split(/\s+/))
+    .map((h) => h.trim().replace(/^#+/, ""))
+    .filter(Boolean);
+}
+
+const draftFieldCls =
+  "w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-[14px] leading-relaxed text-black outline-none transition focus:border-[#5b73d6]/50 focus:ring-2 focus:ring-[#5b73d6]/15";
+
 function scheduleSummaryFromPostingSchedule(
   s: Influencer["posting_schedule"],
 ): PostingScheduleSummary | null {
@@ -562,6 +577,8 @@ function ContentTab({
 }) {
   // Two-step flow: generate a draft (preview) → review → publish.
   const [preview, setPreview] = useState<PostPreview | null>(null);
+  const [draftCaption, setDraftCaption] = useState("");
+  const [draftHashtagsText, setDraftHashtagsText] = useState("");
   const [post, setPost] = useState<PublishedPost | null>(null);
   const [loading, setLoading] = useState(false); // generating a preview
   const [publishing, setPublishing] = useState(false);
@@ -573,6 +590,8 @@ function ContentTab({
   );
   const name = influencer.persona?.displayName || influencer.name;
   const isLinked = Boolean(influencer.postiz_integration_id);
+  const draftHashtags = useMemo(() => editTextToHashtags(draftHashtagsText), [draftHashtagsText]);
+  const draftHashtagLine = useMemo(() => hashtagLine(draftHashtags), [draftHashtags]);
   const latestAutopilot = useMemo(() => latestAutopilotContent(content), [content]);
   const manualFlowActive = Boolean(preview || post || loading);
 
@@ -636,6 +655,8 @@ function ContentTab({
     try {
       const result = await generatePostPreview(influencer.id);
       setPreview(result);
+      setDraftCaption(result.caption);
+      setDraftHashtagsText(hashtagsToEditText(result.hashtags));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -649,7 +670,11 @@ function ContentTab({
     setPublishing(true);
     setError(null);
     try {
-      const result = await publishPostPreview(influencer.id, preview.contentId);
+      const hashtags = editTextToHashtags(draftHashtagsText);
+      const result = await publishPostPreview(influencer.id, preview.contentId, {
+        caption: draftCaption.trim(),
+        hashtags,
+      });
       setPost(result);
       setPreview(null);
       // Add the now-published post to the history list (persisted server-side).
@@ -676,6 +701,8 @@ function ContentTab({
   // Discard the current draft and start over.
   const handleDiscard = () => {
     setPreview(null);
+    setDraftCaption("");
+    setDraftHashtagsText("");
     setError(null);
   };
 
@@ -838,20 +865,38 @@ function ContentTab({
                 ✎
               </span>
               <p className="text-[14px] font-medium text-[#3f54b3]">
-                Review your post before publishing
+                Edit the caption and hashtags, then publish
               </p>
             </div>
 
             <div className="rounded-2xl border border-black/10 p-4">
-              <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-black/40">
-                Caption
-              </p>
-              <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-black/80">
-                {preview.caption}
-              </p>
-              {preview.hashtagLine && (
-                <p className="mt-3 break-words text-[14px] leading-relaxed text-[#5b73d6]">
-                  {preview.hashtagLine}
+              <label className="block">
+                <span className="mb-2 block text-[12px] font-medium uppercase tracking-wide text-black/40">
+                  Caption
+                </span>
+                <textarea
+                  value={draftCaption}
+                  onChange={(e) => setDraftCaption(e.target.value)}
+                  rows={5}
+                  className={`${draftFieldCls} min-h-[120px] resize-y`}
+                  placeholder="Write the caption…"
+                />
+              </label>
+              <label className="mt-4 block">
+                <span className="mb-2 block text-[12px] font-medium uppercase tracking-wide text-black/40">
+                  Hashtags
+                </span>
+                <textarea
+                  value={draftHashtagsText}
+                  onChange={(e) => setDraftHashtagsText(e.target.value)}
+                  rows={3}
+                  className={`${draftFieldCls} min-h-[72px] resize-y font-mono text-[13px]`}
+                  placeholder="One per line — # optional"
+                />
+              </label>
+              {draftHashtagLine && (
+                <p className="mt-3 break-words text-[13px] leading-relaxed text-[#5b73d6]/80">
+                  Preview: {draftHashtagLine}
                 </p>
               )}
             </div>
@@ -860,7 +905,7 @@ function ContentTab({
               <button
                 type="button"
                 onClick={handlePublish}
-                disabled={publishing || !isLinked}
+                disabled={publishing || !isLinked || !draftCaption.trim()}
                 title={
                   isLinked
                     ? undefined

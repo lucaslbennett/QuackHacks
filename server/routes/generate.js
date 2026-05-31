@@ -329,10 +329,20 @@ router.post(
       return res.status(400).json({ ok: false, error: "draft has no image" });
     }
 
+    let caption = String(item.caption || "").trim();
+    let hashtags = Array.isArray(item.hashtags) ? item.hashtags : [];
+    if (typeof req.body.caption === "string") {
+      caption = req.body.caption.trim();
+    }
+    if (Array.isArray(req.body.hashtags)) {
+      hashtags = req.body.hashtags
+        .map((h) => String(h).trim().replace(/^#+/, ""))
+        .filter(Boolean);
+    }
+
     const platform = inf.postiz_platform || "instagram";
-    const hashtags = item.hashtags || [];
-    const hashtagLine = hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
-    const caption = [item.caption, hashtagLine].filter(Boolean).join("\n\n");
+    const hashtagLine = hashtags.map((h) => `#${h}`).join(" ");
+    const postContent = [caption, hashtagLine].filter(Boolean).join("\n\n");
 
     // The stored image URL is relative (/media/...); make it absolute so Postiz
     // can fetch it.
@@ -340,14 +350,14 @@ router.post(
       ? imageRelUrl
       : `${config.publicBaseUrl}${imageRelUrl}`;
 
-    await repo.content.update(contentId, { status: "posting" });
+    await repo.content.update(contentId, { caption, hashtags, status: "posting" });
 
     // Upload + publish now.
     const media = await postiz.uploadFromUrl(imagePublicUrl);
     const { postId } = await postiz.schedulePost({
       integrationId: inf.postiz_integration_id,
       identifier: platform,
-      content: caption,
+      content: postContent,
       date: new Date(),
       media: [media],
       type: "now",
@@ -359,6 +369,8 @@ router.post(
     const channelUrl = postiz.profileUrl(integration);
 
     await repo.content.update(contentId, {
+      caption,
+      hashtags,
       status: "posted",
       meta: {
         ...(item.meta || {}),
@@ -372,7 +384,7 @@ router.post(
         influencerId: inf.id,
         contentId,
         postizPostId: postId,
-        caption: item.caption,
+        caption,
         platform,
         url: channelUrl,
       });
@@ -387,7 +399,7 @@ router.post(
       postizPostId: postId,
       platform,
       imageUrl: imageRelUrl,
-      caption: item.caption,
+      caption,
       hashtags,
       hashtagLine,
       channelUrl,
