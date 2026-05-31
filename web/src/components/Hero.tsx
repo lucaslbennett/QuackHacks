@@ -85,10 +85,21 @@ export default function Hero({
   // Flips on only after the expand transition fully settles, so the helper text
   // doesn't appear mid-animation.
   const [settled, setSettled] = useState(false);
+  const [videoParallax, setVideoParallax] = useState(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setPillsVisible(true), 400);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Drift the background video slightly slower than the hero content as you scroll.
+  useEffect(() => {
+    const onScroll = () => {
+      setVideoParallax(window.scrollY * 0.2);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   // Reveal the helper text once the expand animation (800ms) has finished;
@@ -148,8 +159,11 @@ export default function Hero({
       <video
         aria-hidden
         autoPlay
-        className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-out"
-        style={{ opacity: composerActive ? 0 : 1 }}
+        className="absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-out will-change-transform"
+        style={{
+          opacity: composerActive ? 0 : 1,
+          transform: `translate3d(0, ${videoParallax}px, 0) scale(1.08)`,
+        }}
         loop
         muted
         playsInline

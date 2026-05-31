@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 const CREATORS = [
   {
     name: "Valentina Reyes",
@@ -295,8 +297,24 @@ function FeatureRow({
 }
 
 export default function LandingContent({ onGenerate }: { onGenerate: (prompt: string) => void }) {
+  const [scrollBoost, setScrollBoost] = useState(0);
+
+  // Move this section upward faster than normal scroll so it slides over the hero.
+  useEffect(() => {
+    const onScroll = () => {
+      const vh = window.innerHeight;
+      setScrollBoost(-Math.min(window.scrollY, vh) * 0.38);
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
-    <main className="relative z-[2] bg-[#fbfaf7] text-black">
+    <main
+      className="relative z-[2] bg-[#fbfaf7] text-black shadow-[0_-16px_48px_rgba(0,0,0,0.07)] will-change-transform"
+      style={{ transform: `translate3d(0, ${scrollBoost}px, 0)` }}
+    >
       <section id="accounts" className="border-t border-black/10 px-5 py-20 sm:px-8 sm:py-28 lg:px-10">
         <div className="mx-auto max-w-6xl">
           <div className="flex flex-col justify-between gap-8 md:flex-row md:items-end">

@@ -49,7 +49,7 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <div className="relative min-h-screen overflow-hidden bg-white">
+      <div className="relative min-h-screen bg-white">
         {showDashboard ? (
           // The dashboard owns its own full-height sidebar (branding + nav +
           // auth), so the marketing navbar is hidden here.
