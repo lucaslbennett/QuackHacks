@@ -8,6 +8,32 @@ export const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1
 
 export const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Wraps a per-influencer description in a fixed style frame so every portrait
+// reads like a casual, real-person selfie rather than a polished studio shot.
+// Shared by both image backends (fal Nano Banana + Gemini) so the look stays
+// consistent and can be tuned in one place.
+export function buildInfluencerImagePrompt(description) {
+  return (
+    "A selfie that the person took themselves on a smartphone front-facing " +
+    "camera, held at arm's length. The arm holding the phone is visible " +
+    "reaching toward the camera, OR it is a mirror selfie with the phone " +
+    "clearly visible in hand. Close, slightly-too-near crop with mild " +
+    "front-camera wide-angle lens distortion (face a little enlarged, slightly " +
+    "warped proportions). It must obviously look like a self-taken phone photo, " +
+    "NOT a photo taken by someone else and NOT a professional or content-creator " +
+    "shot. Authentic, candid, slightly awkward everyday moment posted to " +
+    "Instagram or Snapchat. Unflattering everyday lighting: harsh direct " +
+    "on-camera phone flash OR flat overhead room light OR a bright blown-out " +
+    "window behind them, with uneven exposure, mixed color temperatures, " +
+    "visible shadows across the face, and slight overexposed highlights on the " +
+    "skin. Not soft, not even, not glowy, not golden-hour, no ring light, no " +
+    "studio or three-point lighting. Slight phone-camera softness, mild motion " +
+    "blur or grain, realistic skin texture with pores, oil shine and minor " +
+    "blemishes, relaxed natural or slightly imperfect expression. Amateur " +
+    `snapshot aesthetic, no retouching, no glamour. Description: ${description}`
+  );
+}
+
 // Returns an absolute path inside the media directory, creating subdirs.
 export async function mediaPath(...parts) {
   const dir = path.resolve(config.mediaDir, ...parts.slice(0, -1));

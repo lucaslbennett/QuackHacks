@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { fal } from "@fal-ai/client";
 import { config } from "../config.js";
-import { mediaPath } from "../lib/util.js";
+import { mediaPath, buildInfluencerImagePrompt } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("fal");
@@ -53,10 +53,7 @@ export async function generateNanoBananaImage({
   ensureConfig();
   log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
 
-  const fullPrompt =
-    "Photorealistic, high-quality portrait of a social-media influencer for an " +
-    "AI influencer platform. Natural lighting, modern aesthetic, looks like a real " +
-    `person posting on Instagram. Description: ${prompt}`;
+  const fullPrompt = buildInfluencerImagePrompt(prompt);
 
   const result = await fal.subscribe(config.fal.nanoBananaModel, {
     input: { prompt: fullPrompt, num_images: 1 },

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config.js";
-import { mediaPath, mediaUrl } from "../lib/util.js";
+import { mediaPath, mediaUrl, buildInfluencerImagePrompt } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("gemini");
@@ -287,10 +287,7 @@ export async function generateInfluencerImage({
   const c = getClient();
   log.info("Generating influencer image:", String(prompt).slice(0, 80));
 
-  const fullPrompt =
-    "Photorealistic, high-quality portrait of a social-media influencer for an " +
-    "AI influencer platform. Natural lighting, modern aesthetic, looks like a real " +
-    `person posting on Instagram. Description: ${prompt}`;
+  const fullPrompt = buildInfluencerImagePrompt(prompt);
 
   const res = await c.models.generateContent({
     model: config.gemini.imageModel,
