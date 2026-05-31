@@ -1,6 +1,9 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
+import { createLogger } from "./logger.js";
+
+const mediaLog = createLogger("media");
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -145,35 +148,92 @@ export function buildInfluencerImagePrompt(
   return `${style} Description: ${description}`;
 }
 
+// Resolve a /media URL or relative path to an absolute file under MEDIA_DIR.
+function resolveMediaAbsPath(urlOrPath) {
+  if (path.isAbsolute(urlOrPath)) return urlOrPath;
+  if (urlOrPath.startsWith("/media/")) {
+    return path.resolve(config.mediaDir, urlOrPath.slice("/media/".length));
+  }
+  return path.resolve(config.mediaDir, urlOrPath);
+}
+
+function mimeFromPath(abs) {
+  const ext = path.extname(abs).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  return "image/png";
+}
+
 // Loads a previously-generated /media image (by its public URL or absolute
 // path) back off disk as base64 so it can be passed to the Gemini image model
-// as a subject-reference. Returns { data, mimeType } or null if it can't be
-// read (callers treat a null reference as "no reference, text-only").
+// as a subject-reference. Tries local MEDIA_DIR first, then fetches over HTTP
+// from PUBLIC_BASE_URL when the file isn't on this machine (common when the DB
+// points at media created on another host, e.g. local dev + Railway Postgres).
+// Returns { data, mimeType, source } or null if it can't be read.
 export async function loadMediaAsBase64(urlOrPath) {
   if (!urlOrPath) return null;
+
+  const abs = resolveMediaAbsPath(urlOrPath);
+
   try {
-    let abs;
-    if (path.isAbsolute(urlOrPath)) {
-      abs = urlOrPath;
-    } else if (urlOrPath.startsWith("/media/")) {
-      const rel = urlOrPath.slice("/media/".length);
-      abs = path.resolve(config.mediaDir, rel);
-    } else {
-      // A bare relative path under the media dir.
-      abs = path.resolve(config.mediaDir, urlOrPath);
-    }
     const buf = await readFile(abs);
-    const ext = path.extname(abs).toLowerCase();
-    const mimeType =
-      ext === ".jpg" || ext === ".jpeg"
-        ? "image/jpeg"
-        : ext === ".webp"
-          ? "image/webp"
-          : "image/png";
-    return { data: buf.toString("base64"), mimeType };
-  } catch {
-    return null;
+    return { data: buf.toString("base64"), mimeType: mimeFromPath(abs), source: "disk" };
+  } catch (err) {
+    mediaLog.warn(
+      "local media read failed:",
+      urlOrPath,
+      "resolved=",
+      abs,
+      err?.code || err?.message || err
+    );
   }
+
+  // Fallback: fetch from the public server URL if configured.
+  const mediaUrlPath = urlOrPath.startsWith("/media/")
+    ? urlOrPath
+    : urlOrPath.startsWith("http")
+      ? null
+      : `/media/${urlOrPath.split(path.sep).join("/")}`;
+
+  if (mediaUrlPath && config.publicBaseUrl) {
+    const fetchUrl = `${config.publicBaseUrl}${mediaUrlPath}`;
+    try {
+      const res = await fetch(fetchUrl);
+      if (!res.ok) {
+        mediaLog.warn("HTTP media fetch failed:", fetchUrl, "status=", res.status);
+        return null;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeFromPath(abs);
+      mediaLog.info("loaded media over HTTP:", fetchUrl, `bytes=${buf.length}`);
+      return { data: buf.toString("base64"), mimeType, source: "http" };
+    } catch (err) {
+      mediaLog.warn("HTTP media fetch error:", fetchUrl, err?.message || err);
+    }
+  } else if (mediaUrlPath && !config.publicBaseUrl) {
+    mediaLog.warn(
+      "cannot HTTP-fetch missing media; set PUBLIC_BASE_URL (or deploy on Railway with RAILWAY_PUBLIC_DOMAIN):",
+      urlOrPath
+    );
+  }
+
+  return null;
+}
+
+// Copies an influencer's profile image into their own media folder so it isn't
+// stuck under previews/ and is easier to find on a persistent volume. Returns
+// the new /media URL, or the original when the source can't be loaded.
+export async function persistInfluencerProfileImage(influencerId, imageUrl) {
+  if (!influencerId || !imageUrl) return imageUrl;
+
+  const loaded = await loadMediaAsBase64(imageUrl);
+  if (!loaded) return imageUrl;
+
+  const dest = await mediaPath(influencerId, "profile.png");
+  await writeFile(dest, Buffer.from(loaded.data, "base64"));
+  const url = mediaUrl(dest);
+  mediaLog.info("persisted profile image:", imageUrl, "->", url, `via=${loaded.source}`);
+  return url;
 }
 
 // Returns an absolute path inside the media directory, creating subdirs.

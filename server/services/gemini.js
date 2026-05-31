@@ -520,6 +520,7 @@ export async function generateInfluencerImage({
         referenceUrl,
         `mime=${reference.mimeType || "image/png"}`,
         `bytes=${byteLen}`,
+        `via=${reference.source || "unknown"}`,
         "contents=image+text"
       );
     } else {

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as postiz from "../services/postiz.js";
-import { mediaUrl } from "../lib/util.js";
+import { mediaUrl, persistInfluencerProfileImage } from "../lib/util.js";
 import { requireAuth } from "../lib/auth.js";
 
 const router = Router();
@@ -64,6 +64,19 @@ router.post(
       // "ready" = character set up; account setup is the next step.
       status: "ready",
     });
+
+    // Move the onboarding portrait out of previews/ into this influencer's own
+    // media folder so post generation can reliably load it as a reference.
+    if (imageUrl) {
+      const persistedUrl = await persistInfluencerProfileImage(influencer.id, imageUrl);
+      if (persistedUrl !== imageUrl) {
+        const updated = await repo.influencers.update(influencer.id, {
+          image_url: persistedUrl,
+        });
+        res.status(201).json({ ok: true, influencer: updated });
+        return;
+      }
+    }
 
     res.status(201).json({ ok: true, influencer });
   })
