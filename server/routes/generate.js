@@ -1,10 +1,10 @@
 import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
-import * as fal from "../services/fal.js";
 import * as postiz from "../services/postiz.js";
+import { config } from "../config.js";
 import { requireAuth, optionalAuth } from "../lib/auth.js";
-import { pick, FIRST_NAMES, LAST_NAMES } from "../lib/util.js";
+import { pick, LAST_NAMES, publicMediaUrl } from "../lib/util.js";
 
 const router = Router();
 
@@ -16,119 +16,7 @@ const asyncH = (fn) => (req, res) =>
       .json({ ok: false, error: err?.message || String(err) || "internal error" });
   });
 
-// Looks up an onboarding answer by a keyword in its question text. Answers are
-// keyed by the full question string the chat asked.
-function findAnswer(answers, keyword) {
-  const hit = Object.entries(answers).find(([q]) =>
-    q.toLowerCase().includes(keyword)
-  );
-  return (hit?.[1] || "").trim();
-}
-
-// Builds a fresh-ish post (caption + hashtags + image prompt) straight from a
-// persona, no LLM. Used when Gemini isn't configured so "generate post" still
-// works on the fal key alone. Varies by pillar + a random angle each call.
-const POST_ANGLES = [
-  "a quick tip",
-  "a behind-the-scenes moment",
-  "a relatable everyday struggle",
-  "a question for the comments",
-  "a 'things nobody tells you' angle",
-  "a currently-obsessed recommendation",
-];
-function buildPostFromPersona(persona) {
-  const niche = persona.niche || persona.displayName || "lifestyle";
-  const pillars =
-    Array.isArray(persona.contentPillars) && persona.contentPillars.length
-      ? persona.contentPillars
-      : [niche];
-  const pillar = pillars[Math.floor(Math.random() * pillars.length)];
-  const angle = POST_ANGLES[Math.floor(Math.random() * POST_ANGLES.length)];
-  const slug = String(niche).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 14) || "creator";
-
-  const caption = `${pillar} — ${angle}. ${persona.bio || `More ${niche} every week.`} What do you want to see next? 👇`;
-  const hashtags = Array.from(
-    new Set([
-      slug,
-      ...String(pillar).toLowerCase().split(/\s+/).filter(Boolean),
-      "creator",
-      "fyp",
-      "reels",
-    ])
-  ).slice(0, 10);
-  const imagePrompt =
-    persona.imagePrompt ||
-    [persona.appearance, persona.aesthetic].filter(Boolean).join(". ") ||
-    `${niche} influencer, ${pillar} scene, natural lighting`;
-
-  return { caption, hashtags, imagePrompt, altText: `${niche} post`, title: pillar };
-}
-
-// Builds a usable character straight from the chat answers, no LLM. Used when
-// Gemini isn't configured so onboarding still works on the fal key alone.
-function buildCharacterFromAnswers(answers) {
-  const niche = findAnswer(answers, "niche") || "lifestyle";
-  const audience = findAnswer(answers, "audience") || "a broad online audience";
-  const vibe = findAnswer(answers, "vibe") || findAnswer(answers, "personality") || "warm and authentic";
-  const format = findAnswer(answers, "post") || findAnswer(answers, "content") || "short-form videos";
-  const look = findAnswer(answers, "look") || "";
-
-  const slug = niche
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "")
-    .slice(0, 12) || "creator";
-  const firstName = pick(FIRST_NAMES);
-  const lastName = pick(LAST_NAMES);
-  const displayName = `${firstName} ${lastName}`;
-  const lookClause =
-    look && !/you decide/i.test(look) ? look : "natural, approachable, modern";
-
-  return {
-    firstName,
-    lastName,
-    displayName,
-    tagline: `${vibe} ${niche} content for ${audience}`.slice(0, 60),
-    handleSuggestions: (() => {
-      const f = firstName.toLowerCase();
-      const l = lastName.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      return [`${f}.${l}`, `${f}${l}`, `${f}.${slug}`];
-    })(),
-    niche,
-    bio: `${niche} for ${audience} ✨ ${vibe}`.slice(0, 150),
-    personality: `A ${vibe} creator who lives and breathes ${niche}. They speak directly to ${audience} and keep things real.`,
-    appearance: lookClause,
-    aesthetic: `${vibe} ${niche} aesthetic, natural lighting, modern social-media feed`,
-    contentPillars: [
-      `${niche} tips`,
-      `behind the scenes`,
-      `${niche} trends`,
-      `community Q&A`,
-    ],
-    contentFormats: [format, "talking-head reels", "day-in-the-life vlogs"],
-    samplePosts: [
-      {
-        hook: `The one ${niche} thing nobody tells you`,
-        caption: `Saving you the trial-and-error. Follow for more ${niche}. #${slug}`,
-      },
-      {
-        hook: `A day in my ${niche} life`,
-        caption: `Realistic, not perfect. Made for ${audience}. #${slug}`,
-      },
-      {
-        hook: `You asked, I answered`,
-        caption: `Your top ${niche} questions this week. Drop more below 👇`,
-      },
-    ],
-    postingStrategy: {
-      postsPerDay: 2,
-      bestTimes: ["8am", "12pm", "7pm"],
-      hashtagThemes: [niche, "creator", "fyp"],
-    },
-    imagePrompt: `Portrait of a ${niche} social-media influencer. ${lookClause}. ${vibe} energy.`,
-  };
-}
-
-// Public: generate an influencer image from a text prompt (free preview).
+// Public: generate an influencer image from a text prompt.
 router.post(
   "/influencer-image",
   asyncH(async (req, res) => {
@@ -147,11 +35,9 @@ router.post(
   })
 );
 
-// Public: from a handful of onboarding chat answers, design a character and
-// render its portrait. The persona/content plan is written by Gemini when it's
-// configured, otherwise built directly from the answers so the flow runs on the
-// fal key alone. The portrait uses Nano Banana on fal.ai, falling back to the
-// Gemini image path only if fal isn't configured.
+// Public: from a creation brief, design a character and render its portrait. The
+// persona/content plan and portrait are generated by Gemini. The portrait uses
+// Nano Banana Pro directly through the Gemini API.
 router.post(
   "/onboarding-character",
   asyncH(async (req, res) => {
@@ -161,7 +47,7 @@ router.post(
         .status(400)
         .json({ ok: false, error: "answers object is required" });
     }
-    if (!fal.isConfigured() && !gemini.isConfigured()) {
+    if (!gemini.isConfigured()) {
       return res
         .status(503)
         .json({ ok: false, error: "character generation is not configured" });
@@ -172,18 +58,14 @@ router.post(
     // from a real list and suggested to the model.
     const suggestedLastName = pick(LAST_NAMES);
 
-    const character = gemini.isConfigured()
-      ? await gemini.designOnboardingCharacter({ answers, suggestedLastName })
-      : buildCharacterFromAnswers(answers);
+    const character = await gemini.designOnboardingCharacter({ answers, suggestedLastName });
 
     const imagePrompt =
       character.imagePrompt ||
       [character.appearance, character.aesthetic].filter(Boolean).join(". ") ||
       character.displayName;
 
-    const image = fal.isConfigured()
-      ? await fal.generateNanoBananaImage({ prompt: imagePrompt })
-      : await gemini.generateInfluencerImage({ prompt: imagePrompt });
+    const image = await gemini.generateInfluencerImage({ prompt: imagePrompt });
 
     res.json({ ok: true, character, imageUrl: image.url });
   })
@@ -215,7 +97,7 @@ router.post(
         .status(400)
         .json({ ok: false, error: "persona or prompt is required" });
     }
-    if (!fal.isConfigured() && !gemini.isConfigured()) {
+    if (!gemini.isConfigured()) {
       return res
         .status(503)
         .json({ ok: false, error: "post generation is not configured" });
@@ -233,14 +115,9 @@ router.post(
           aesthetic: fallbackPrompt,
         };
 
-    // Caption/hashtags via Gemini when available; otherwise a persona-derived
-    // fallback so the post still works on the fal key alone.
-    const post = gemini.isConfigured()
-      ? await gemini.generatePostContent({ persona: effectivePersona })
-      : buildPostFromPersona(effectivePersona);
+    const post = await gemini.generatePostContent({ persona: effectivePersona });
 
-    // Render the post image from the scene prompt the writer produced. Prefer
-    // fal Nano Banana (matches onboarding), fall back to the Gemini image path.
+    // Render the post image from the scene prompt through Gemini Nano Banana.
     const imagePrompt =
       post.imagePrompt ||
       effectivePersona.imagePrompt ||
@@ -249,9 +126,7 @@ router.post(
         .join(". ") ||
       fallbackPrompt;
 
-    const image = fal.isConfigured()
-      ? await fal.generateNanoBananaImage({ prompt: imagePrompt, label: "post" })
-      : await gemini.generateInfluencerImage({ prompt: imagePrompt, label: "post" });
+    const image = await gemini.generateInfluencerImage({ prompt: imagePrompt, label: "post" });
 
     const hashtagLine = post.hashtags.map((h) => `#${h}`).join(" ");
     // A single block that's trivial to copy and paste into Instagram: caption,
@@ -302,11 +177,11 @@ router.post(
 
 // Auth required: generate a post image for an influencer and publish it through
 // Postiz to that influencer's linked channel — Postiz owns the publishing. The
-// photo is rendered with fal (Postiz has no text-to-image), the caption +
-// hashtags are built from the persona (no LLM), and Postiz uploads the image and
-// creates the post immediately ("now"). The published post is persisted to the
-// influencer's content history and posts table, and the response includes a
-// link to the live channel (e.g. the Instagram profile).
+// photo is rendered with Gemini Nano Banana Pro, the caption + hashtags are
+// built from the persona, and Postiz uploads the image and creates the post
+// immediately ("now"). The published post is persisted to the influencer's
+// content history and posts table, and the response includes a link to the live
+// channel (e.g. the Instagram profile).
 router.post(
   "/post-postiz",
   requireAuth,
@@ -320,10 +195,16 @@ router.post(
         .status(503)
         .json({ ok: false, error: "Postiz is not configured (POSTIZ_API_KEY)" });
     }
-    if (!fal.isConfigured()) {
+    if (!gemini.isConfigured()) {
       return res
         .status(503)
-        .json({ ok: false, error: "image generation is not configured (FAL_KEY)" });
+        .json({ ok: false, error: "image generation is not configured (GEMINI_API_KEY)" });
+    }
+    if (!config.publicBaseUrl) {
+      return res.status(503).json({
+        ok: false,
+        error: "PUBLIC_BASE_URL is required so Postiz can fetch generated images",
+      });
     }
 
     // Ownership: only the influencer's owner may publish on its behalf.
@@ -343,28 +224,26 @@ router.post(
     const persona = inf.persona && typeof inf.persona === "object" ? inf.persona : {};
     const platform = inf.postiz_platform || "instagram";
 
-    // 1) Build caption + hashtags + an image scene straight from the persona
-    //    (no LLM — Postiz/this flow owns the text).
-    const built = buildPostFromPersona({
+    // 1) Build caption + hashtags + an image scene from the persona.
+    const built = await gemini.generatePostContent({ persona: {
       ...persona,
       displayName: persona.displayName || inf.name,
       niche: persona.niche || inf.niche,
-    });
+    } });
 
-    // 2) Render the photo with fal. fal returns a public CDN url that Postiz can
-    //    fetch directly, so we hand that url to upload-from-url (no PUBLIC_BASE_URL
-    //    round-trip needed).
-    const image = await fal.generateNanoBananaImage({
+    // 2) Render the photo with Nano Banana Pro, then expose the locally stored
+    //    media through the app's public URL so Postiz can fetch it.
+    const image = await gemini.generateInfluencerImage({
       prompt: built.imagePrompt,
       influencerId,
       label: "post",
     });
-
+    const imagePublicUrl = publicMediaUrl(image.path);
     const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
     const caption = [built.caption, hashtagLine].filter(Boolean).join("\n\n");
 
     // 3) Hand everything to Postiz: upload the image, then publish now.
-    const media = await postiz.uploadFromUrl(image.url);
+    const media = await postiz.uploadFromUrl(imagePublicUrl);
     const { postId } = await postiz.schedulePost({
       integrationId: inf.postiz_integration_id,
       identifier: platform,

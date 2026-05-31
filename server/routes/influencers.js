@@ -35,8 +35,8 @@ async function loadOwned(req, res) {
   return influencer;
 }
 
-// Launch an influencer straight from the onboarding quiz funnel: persists the
-// character the user designed (persona + portrait) as a user-owned influencer in
+// Launch an influencer from the creator: persists the generated character
+// (persona + portrait) as a user-owned influencer in
 // the "ready" state so it shows up in their dashboard and can be managed there.
 // The Instagram account is set up separately (stubbed for now).
 router.post(

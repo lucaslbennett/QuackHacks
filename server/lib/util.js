@@ -28,8 +28,8 @@ export const LAST_NAMES = [
 
 // Wraps a per-influencer description in a fixed style frame so every portrait
 // reads like a casual, real-person selfie rather than a polished studio shot.
-// Shared by both image backends (fal Nano Banana + Gemini) so the look stays
-// consistent and can be tuned in one place.
+// Shared by Gemini Nano Banana image generation so the look stays consistent
+// and can be tuned in one place.
 export function buildInfluencerImagePrompt(description) {
   return (
     "A selfie that the person took themselves on a smartphone front-facing " +

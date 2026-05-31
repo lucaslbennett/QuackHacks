@@ -3,7 +3,6 @@ import { Router } from "express";
 import { config, missingKeys } from "../config.js";
 import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
-import * as fal from "../services/fal.js";
 import * as stagehand from "../services/browser/stagehand.js";
 import * as capsolver from "../services/browser/capsolver.js";
 import * as postiz from "../services/postiz.js";
@@ -30,7 +29,6 @@ router.get("/status", async (req, res) => {
       database: db,
       gemini: gemini.isConfigured(),
       elevenlabs: eleven.isConfigured(),
-      fal: fal.isConfigured(),
       browserbase: stagehand.isConfigured(),
       capsolver: capsolver.isConfigured(),
       postiz: postiz.isConfigured(),

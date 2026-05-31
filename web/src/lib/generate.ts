@@ -54,7 +54,7 @@ interface GenerateResponse {
   error?: string;
 }
 
-// The full character the onboarding chat designs (persona + content plan).
+// The full generated character (persona + content plan).
 export interface Character {
   firstName: string;
   lastName: string;
@@ -75,8 +75,7 @@ export interface Character {
     hashtagThemes: string[];
   };
   imagePrompt: string;
-  // The raw onboarding answers, carried through so they're stored as the
-  // influencer's questionnaire. Optional: only set when launching.
+  // The raw creation brief, carried through when launching.
   answers?: Record<string, string>;
 }
 
@@ -87,8 +86,8 @@ interface OnboardingResponse {
   error?: string;
 }
 
-// Public: design a full character (persona + content plan) from onboarding chat
-// answers and render its portrait with Nano Banana on fal.ai.
+// Public: design a full character (persona + content plan) from a creation brief
+// and render its portrait with Nano Banana through Gemini.
 export async function generateOnboardingCharacter(
   answers: Record<string, string>,
 ): Promise<{ character: Character; imageUrl: string }> {
@@ -153,10 +152,9 @@ export async function generatePost(input: {
   };
 }
 
-// Auth required: generate a post image (fal) + persona caption for an
+// Auth required: generate a Nano Banana Pro image + persona caption for an
 // influencer and publish it immediately through that influencer's linked Postiz
-// channel. Postiz owns the publishing; the response describes the live post and
-// a link to the channel (e.g. the Instagram profile).
+// channel. The response describes the live post and links to the channel.
 export async function publishViaPostiz(
   influencerId: string,
 ): Promise<PublishedPost> {

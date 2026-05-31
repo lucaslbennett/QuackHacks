@@ -1,7 +1,6 @@
 import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
-import * as fal from "../services/fal.js";
 import { assembleReel } from "../services/video.js";
 import { scrapeInstagramProfile } from "../services/browser/scrapeProfile.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
@@ -135,25 +134,22 @@ export async function generateContent({ influencerId, contentId, topic }) {
   });
   await repo.content.update(contentId, { audio_path: audioPath });
 
-  // Visuals: generate stills, then optionally animate the first one.
+  // Visuals: generate Nano Banana stills. The reel assembler adds motion by
+  // cycling and cropping them under the voiceover.
   await repo.content.update(contentId, { status: "rendering" });
   const imagePaths = [];
-  const clipPaths = [];
   const prompts = (script.bRollPrompts || []).slice(0, 3);
   for (const p of prompts) {
     try {
       const styled = `${p}. Style: ${persona.visualStyle?.aesthetic || "cinematic, high quality"}.`;
-      const img = await fal.generateImage({ prompt: styled, influencerId, label: "broll" });
+      const img = await gemini.generateInfluencerImage({
+        prompt: styled,
+        influencerId,
+        label: "broll",
+        aspectRatio: "9:16",
+        frameAsSelfie: false,
+      });
       imagePaths.push(img.path);
-      if (clipPaths.length === 0) {
-        const clip = await fal
-          .generateVideoFromImage({ imageUrl: img.url, prompt: p, influencerId })
-          .catch((e) => {
-            log.warn("video gen failed, using still:", e.message);
-            return null;
-          });
-        if (clip) clipPaths.push(clip.path);
-      }
     } catch (err) {
       log.warn("image gen failed:", err.message);
     }
@@ -164,7 +160,6 @@ export async function generateContent({ influencerId, contentId, topic }) {
     contentId,
     audioPath,
     imagePaths,
-    clipPaths,
     captions: script.onScreenText || [script.hook],
   });
 

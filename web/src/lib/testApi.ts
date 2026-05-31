@@ -6,7 +6,6 @@ export interface IntegrationStatus {
   database: boolean;
   gemini: boolean;
   elevenlabs: boolean;
-  fal: boolean;
   browserbase: boolean;
   capsolver: boolean;
 }

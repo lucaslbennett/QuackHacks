@@ -1,8 +1,8 @@
 import { getToken } from "./auth";
 import type { Character } from "./generate";
 
-// A user-owned influencer created from the onboarding quiz funnel and managed
-// from the dashboard. Mirrors the influencers table (+ summary fields on list).
+// A user-owned influencer created from a brief and managed from the dashboard.
+// Mirrors the influencers table (+ summary fields on list).
 export interface Influencer {
   id: string;
   user_id: string | null;

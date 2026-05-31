@@ -15,8 +15,8 @@ import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
 
 interface DashboardProps {
-  // Launches the onboarding quiz funnel (wired from App).
-  onCreate?: () => void;
+  // Launches the influencer creator, optionally with a composer prompt.
+  onCreate?: (seed?: string) => void;
   // Leaves the dashboard and returns to the marketing home.
   onHome?: () => void;
 }
@@ -104,7 +104,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     >
       <div className="mx-auto max-w-5xl px-6 py-8 sm:px-10 sm:py-10">
         {section === "overview" && (
-          <Studio name={name} onCreate={() => onCreate?.()} onBrowse={() => setSection("content")} />
+          <Studio name={name} onCreate={(seed) => onCreate?.(seed)} onBrowse={() => setSection("content")} />
         )}
 
         {section === "influencers" &&
@@ -217,11 +217,11 @@ function Studio({
   onBrowse,
 }: {
   name: string;
-  onCreate: () => void;
+  onCreate: (seed?: string) => void;
   onBrowse: () => void;
 }) {
   const [value, setValue] = useState("");
-  const submit = () => onCreate();
+  const submit = () => onCreate(value.trim());
 
   return (
     <div className="flex min-h-[calc(100vh-5rem)] flex-col">
@@ -279,7 +279,7 @@ function Studio({
       <div className="grid gap-5 pb-4 sm:grid-cols-2">
         <PreviewCard
           title="Create an influencer"
-          subtitle="Answer a few questions and we'll build a character for you"
+          subtitle="Describe your idea and we'll build a character for you"
           onClick={onCreate}
           variant="create"
           greeting={name}
@@ -402,8 +402,8 @@ function Influencers({
       {influencers.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-neutral-300 p-10 text-center">
           <p className="text-[14px] text-neutral-500">
-            No influencers yet. Click “New influencer” to build one — answer a few
-            questions and it'll start creating content for you.
+            No influencers yet. Click “New influencer” to describe one and start
+            creating content.
           </p>
         </div>
       ) : (
@@ -729,8 +729,7 @@ function Analytics() {
 function Settings() {
   const { user } = useAuth();
   const integrations = [
-    { label: "fal.ai (Nano Banana images)", status: "Connected", ok: true },
-    { label: "Gemini (persona + captions)", status: "Connected", ok: true },
+    { label: "Gemini (Nano Banana + captions)", status: "Connected", ok: true },
     { label: "ElevenLabs (voiceover)", status: "Not connected", ok: false },
     { label: "Instagram auto-posting", status: "Coming soon", ok: false },
   ];

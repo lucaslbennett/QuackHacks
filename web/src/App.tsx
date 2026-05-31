@@ -16,8 +16,8 @@ export default function App() {
   const [showDashboard, setShowDashboard] = useState(
     () => localStorage.getItem(DASH_KEY) === "1",
   );
-  // null = closed; string (possibly empty) = onboarding open, seeded with the
-  // text the user typed in the hero composer.
+  // null = closed; string (possibly empty) = creator open, seeded with the text
+  // the user typed in a composer.
   const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
 
   // Persist the home/dashboard choice across reloads.
@@ -25,9 +25,7 @@ export default function App() {
     localStorage.setItem(DASH_KEY, showDashboard ? "1" : "0");
   }, [showDashboard]);
 
-  // Leaving onboarding simply unmounts it, which discards all in-progress
-  // state (answers, generated character) since nothing is persisted until the
-  // user explicitly saves.
+  // Leaving the creator simply unmounts it, which discards in-progress state.
   const closeOnboarding = () => setOnboardSeed(null);
 
   const goHome = () => {
@@ -53,7 +51,7 @@ export default function App() {
         {showDashboard ? (
           // The dashboard owns its own full-height sidebar (branding + nav +
           // auth), so the marketing navbar is hidden here.
-          <Dashboard onCreate={() => setOnboardSeed("")} onHome={goHome} />
+          <Dashboard onCreate={(seed = "") => setOnboardSeed(seed)} onHome={goHome} />
         ) : (
           <>
             <Navbar

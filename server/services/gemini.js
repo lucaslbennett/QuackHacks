@@ -317,32 +317,59 @@ Return JSON with this exact shape:
   };
 }
 
-// Generates an influencer portrait with Nano Banana Pro (Gemini 3 Pro Image)
-// and saves it locally. Returns { url, path }.
+function imageGenerationError(err) {
+  const message = String(err?.message || err || "");
+  const noQuota = /RESOURCE_EXHAUSTED|quota exceeded/i.test(message);
+  if (!noQuota) return err;
+
+  const hasZeroLimit = /limit[":\s]+0\b/i.test(message);
+  if (hasZeroLimit) {
+    return new Error(
+      `Gemini image generation is unavailable because this API project has no image-generation quota for ${config.gemini.imageModel}. Enable billing for the Gemini API project, then try again.`
+    );
+  }
+
+  return new Error(
+    `Gemini image-generation quota was reached for ${config.gemini.imageModel}. Wait briefly and try again, or check the project's Gemini API quota.`
+  );
+}
+
+// Generates an influencer image with Nano Banana Pro and saves it locally.
+// Returns { url, path }.
 export async function generateInfluencerImage({
   prompt,
   influencerId,
   label = "influencer",
   aspectRatio = "1:1",
+  frameAsSelfie = true,
 }) {
   const c = getClient();
-  log.info("Generating influencer image:", String(prompt).slice(0, 80));
+  log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
 
-  const fullPrompt = buildInfluencerImagePrompt(prompt);
+  const fullPrompt = frameAsSelfie ? buildInfluencerImagePrompt(prompt) : prompt;
 
-  const res = await c.models.generateContent({
-    model: config.gemini.imageModel,
-    contents: fullPrompt,
-    config: {
-      responseModalities: ["IMAGE"],
-      imageConfig: { aspectRatio, imageSize: "2K" },
-    },
-  });
+  const isLegacyFlash = config.gemini.imageModel === "gemini-2.5-flash-image";
+  let res;
+  try {
+    res = await c.models.generateContent({
+      model: config.gemini.imageModel,
+      contents: fullPrompt,
+      config: {
+        responseModalities: ["IMAGE"],
+        imageConfig: {
+          aspectRatio,
+          ...(!isLegacyFlash ? { imageSize: "2K" } : {}),
+        },
+      },
+    });
+  } catch (err) {
+    throw imageGenerationError(err);
+  }
 
   const parts = res?.candidates?.[0]?.content?.parts || [];
   const imagePart = parts.find((p) => p?.inlineData?.data);
   if (!imagePart) {
-    throw new Error("Nano Banana Pro returned no image");
+    throw new Error("Nano Banana returned no image");
   }
 
   const buffer = Buffer.from(imagePart.inlineData.data, "base64");
