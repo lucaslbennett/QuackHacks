@@ -32,44 +32,70 @@ export const LAST_NAMES = [
 // place. `selfie` toggles the self-taken front-camera framing (used for
 // portraits and selfie-style posts) vs. a normal candid photo taken of the
 // person (used for scene posts where a selfie framing would look forced).
-function amateurPhotoStyle({ selfie = true } = {}) {
+//
+// `hasReference` matters for identity fidelity: when a reference profile photo
+// is supplied to the image model, the FACE and SKIN TONE must come from that
+// photo, not from text. So with a reference we (1) DROP the generic facial
+// attractiveness description (symmetrical face, clear skin, etc.) because it
+// competes with the reference and makes the model invent a new face/skin tone,
+// and (2) DROP the front-camera face-warping, which fights face fidelity. The
+// body/styling/attractiveness text is only used when there's no reference.
+function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
   const framing = selfie
     ? "A selfie that the person took themselves on a smartphone front-facing " +
       "camera, held at arm's length. The arm holding the phone is visible " +
       "reaching toward the camera, OR it is a mirror selfie with the phone " +
-      "clearly visible in hand. Close, slightly-too-near crop with mild " +
-      "front-camera wide-angle lens distortion (face a little enlarged, slightly " +
-      "warped proportions). It must obviously look like a self-taken phone photo, " +
-      "NOT a photo taken by someone else and NOT a professional or content-creator " +
-      "shot. "
+      "clearly visible in hand. Close, slightly-too-near crop" +
+      (hasReference
+        ? " typical of a front-facing phone camera, but WITHOUT distorting or " +
+          "reshaping the face — keep the face's true proportions and identity. "
+        : " with mild front-camera wide-angle lens distortion (face a little " +
+          "enlarged, slightly warped proportions). ") +
+      "It must obviously look like a self-taken phone photo, NOT a photo taken " +
+      "by someone else and NOT a professional or content-creator shot. "
     : "A casual phone snapshot of the person in the scene, taken by a friend or " +
       "on a propped-up phone — natural framing, not a selfie, not a posed " +
       "professional or content-creator shot. ";
-  return (
-    framing +
-    // SUBJECT: the person is genuinely attractive and well put-together. This is
-    // intentionally kept SEPARATE from the capture description below — a good
-    // looking person can still be captured in a casual, imperfect phone photo.
-    "The person is strikingly attractive and photogenic — naturally beautiful, " +
-    "with a symmetrical face, clear healthy skin, good bone structure, an " +
-    "appealing fit/toned figure, and a flattering hairstyle. They are well " +
-    "groomed with tasteful, on-trend styling and outfit, and a warm, confident, " +
-    "naturally engaging expression. Think a conventionally good-looking real " +
-    "person who happens to take casual photos. " +
-    // CAPTURE: only the photography is amateur/imperfect — NOT the person.
+
+  // SUBJECT description is ONLY used without a reference. With a reference the
+  // person's looks are defined by the reference photo, so we say nothing about
+  // their face/skin/figure here (that would override the reference).
+  const subject = hasReference
+    ? ""
+    : "The person is strikingly attractive and photogenic — naturally " +
+      "beautiful, with a symmetrical face, clear healthy skin, good bone " +
+      "structure, an appealing fit/toned figure, and a flattering hairstyle. " +
+      "They are well groomed with tasteful, on-trend styling and outfit, and a " +
+      "warm, confident, naturally engaging expression. Think a conventionally " +
+      "good-looking real person who happens to take casual photos. ";
+
+  // CAPTURE: only the photography is amateur/imperfect — NOT the person. With a
+  // reference, this describes ONLY how the photo is rendered (texture/grain) and
+  // says nothing about the person's actual skin/complexion — that comes wholly
+  // from the reference image, including under the new lighting.
+  const skin = hasReference
+    ? "Render the skin with realistic phone-camera texture (visible pores, NOT " +
+      "plastic, NOT over-smoothed, NOT airbrushed). Keep the person's own skin " +
+      "tone, complexion, and features exactly as in the reference image; let the " +
+      "scene's lighting fall across that real face naturally without changing " +
+      "who they are. "
+    : "Slight phone-camera softness, a little grain, and realistic skin texture " +
+      "with visible pores (NOT plastic, NOT over-smoothed, NOT airbrushed) — " +
+      "but clear, attractive skin without distracting blemishes or heavy oil " +
+      "shine. ";
+
+  const capture =
     "The PHOTO itself (not the person) is a candid, un-staged everyday phone " +
     "snapshot posted to Instagram or Snapchat. Everyday phone-camera lighting: " +
     "soft window daylight, warm indoor light, or a mild on-camera flash — " +
-    "natural and a little uneven, with realistic mixed color temperatures, but " +
-    "still flattering enough to read as a photo someone would actually post. " +
-    "Not a professional studio setup, no ring light, no three-point lighting, " +
-    "no heavy color grading. Slight phone-camera softness, a little grain, and " +
-    "realistic skin texture with visible pores (NOT plastic, NOT over-smoothed, " +
-    "NOT airbrushed) — but clear, attractive skin without distracting blemishes " +
-    "or heavy oil shine. Authentic amateur snapshot framing and capture, with a " +
-    "genuinely attractive subject. Avoid an obviously posed, glamour, or " +
-    "AI-perfect look."
-  );
+    "natural and a little uneven, but still flattering enough to read as a " +
+    "photo someone would actually post. Not a professional studio setup, no " +
+    "ring light, no three-point lighting, no heavy color grading. " +
+    skin +
+    "Authentic amateur snapshot framing and capture. Avoid an obviously posed, " +
+    "glamour, or AI-perfect look.";
+
+  return framing + subject + capture;
 }
 
 // Wraps a per-influencer description in the amateur phone-photo style frame.
@@ -81,15 +107,21 @@ export function buildInfluencerImagePrompt(
   description,
   { hasReference = false, selfie = true } = {}
 ) {
-  const style = amateurPhotoStyle({ selfie });
+  const style = amateurPhotoStyle({ selfie, hasReference });
   if (hasReference) {
     return (
-      "Using the provided reference photo as the SUBJECT, generate a NEW photo " +
-      "of the SAME person. Preserve their identity exactly: same face shape, " +
-      "facial features, eye color, skin tone, hairstyle and hair color, body " +
-      "type, and any distinguishing marks. Do not change who the person is — " +
-      "only the setting, pose, outfit, expression, and lighting may change to " +
-      "match the new scene. " +
+      "The provided reference photo IS the person. Take their entire physical " +
+      "appearance wholesale from that image — facial structure, every facial " +
+      "feature, skin tone and complexion, hair, body type, and all " +
+      "distinguishing marks — and reproduce it faithfully. This is the SAME real " +
+      "individual, not a lookalike: a stranger comparing the two photos should " +
+      "have zero doubt it is the same person. Do NOT redesign, beautify, " +
+      "lighten, darken, slim, age, or otherwise change how they look in any way; " +
+      "your only job for the person is to carry their exact appearance over " +
+      "unchanged. The text below describes ONLY the new photo's scene and how it " +
+      "is shot — never how the person looks. Generate a NEW candid photo of this " +
+      "exact person in which only the setting, pose, outfit, expression, and " +
+      "lighting differ. " +
       style +
       ` Scene for this new photo: ${description}`
     );

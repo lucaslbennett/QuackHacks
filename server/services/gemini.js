@@ -415,8 +415,12 @@ Rules:
   caption or hashtags. Embody the audience's tone instead of naming them. A real
   person doesn't announce who their target audience is in their own caption.
 - Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
-- Provide a vivid image generation prompt that matches the persona's appearance/aesthetic
-  and depicts a concrete, photo-worthy scene for THIS specific post (not just a portrait).
+- Provide a vivid image generation prompt that depicts a concrete, photo-worthy
+  scene for THIS specific post (not just a portrait). Describe the SETTING, action,
+  outfit/wardrobe, mood, and framing — but do NOT redescribe the person's face,
+  facial features, or skin tone. A reference photo of the influencer is supplied
+  separately and defines their identity; restating their face/skin in words only
+  makes the image drift from the real person. Refer to them as "the person" / "her".
 - Decide whether THIS post reads best as a self-taken selfie (close, face-forward,
   phone-in-hand) or as a wider candid scene photo of the person in their setting,
   and set "shotType" accordingly.
