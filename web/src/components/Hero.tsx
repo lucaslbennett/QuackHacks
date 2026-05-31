@@ -10,8 +10,8 @@ const HELPER_TEXT =
 const PILL_BUTTONS = [
   "Launch my AI influencer",
   "See how it works",
-  "Watch a sample video",
-  "View revenue reports",
+  "Explore creator accounts",
+  "Common questions",
 ] as const;
 
 const SAMPLE_PROMPTS = [
@@ -127,6 +127,20 @@ export default function Hero({
   const handleSamplePrompt = (prompt: string) => {
     setChatValue(prompt);
     setComposerActive(true);
+  };
+
+  const handlePillClick = (label: (typeof PILL_BUTTONS)[number]) => {
+    if (label === "Launch my AI influencer") {
+      onGenerate("");
+      return;
+    }
+    const target =
+      label === "See how it works"
+        ? "product"
+        : label === "Explore creator accounts"
+          ? "accounts"
+          : "faq";
+    document.getElementById(target)?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
@@ -281,11 +295,7 @@ export default function Hero({
             <button
               key={label}
               type="button"
-              onClick={
-                label === "Launch my AI influencer"
-                  ? () => onGenerate("")
-                  : undefined
-              }
+              onClick={() => handlePillClick(label)}
               className="mx-[0.2em] mb-[0.4em] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-black px-4 py-[0.3em] text-[13px] text-white transition-colors duration-200 hover:bg-white hover:text-black sm:px-5 sm:text-[15px]"
             >
               {label}

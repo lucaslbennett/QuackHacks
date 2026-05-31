@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../lib/authContext";
 import { isLocalhost } from "../lib/auth";
 import type { AuthMode } from "./AuthModal";
 
-const NAV_LINKS = ["Home", "Demo", "Dashboard"] as const;
+const NAV_LINKS = ["Home", "Product", "FAQ", "Dashboard"] as const;
 
 const SHOW_DEV_LOGIN = isLocalhost();
 
@@ -19,7 +19,15 @@ export default function Navbar({
   inDashboard?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pastHero, setPastHero] = useState(false);
   const { user, devLogin, logout } = useAuth();
+
+  useEffect(() => {
+    const update = () => setPastHero(window.scrollY > window.innerHeight - 96);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
 
   const handleDevLogin = () => {
     devLogin().catch(() => {
@@ -28,13 +36,26 @@ export default function Navbar({
   };
 
   const handleNavClick = (link: string) => {
-    if (link === "Dashboard") onDashboard();
-    else if (onHome) onHome();
+    if (link === "Dashboard") {
+      onDashboard();
+      return;
+    }
+    if (onHome) onHome();
+    requestAnimationFrame(() => {
+      if (link === "Home") window.scrollTo({ top: 0, behavior: "smooth" });
+      else document.getElementById(link.toLowerCase())?.scrollIntoView({ behavior: "smooth" });
+    });
   };
 
   return (
     <>
-      <header className="fixed top-0 z-[57] flex w-full items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
+      <header
+        className={`fixed top-0 z-[57] flex w-full items-center justify-between border-b px-5 py-4 transition-colors duration-300 sm:px-8 sm:py-5 ${
+          pastHero
+            ? "border-black/10 bg-white/85 backdrop-blur-md"
+            : "border-transparent bg-transparent"
+        }`}
+      >
         {/* Logo */}
         <div className="flex items-center gap-2">
           <img

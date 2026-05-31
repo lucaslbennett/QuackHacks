@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import AuthProvider from "./components/AuthProvider";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
+import LandingContent from "./components/LandingContent";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
 import Dashboard from "./components/Dashboard";
 import Onboarding from "./components/Onboarding";
@@ -66,6 +67,7 @@ export default function App() {
               inDashboard={false}
             />
             <Hero onGenerate={setOnboardSeed} />
+            <LandingContent onGenerate={setOnboardSeed} />
             <TestPanel />
           </>
         )}
