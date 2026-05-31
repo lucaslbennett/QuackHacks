@@ -14,7 +14,7 @@ const PILL_BUTTONS = [
   "View revenue reports",
 ] as const;
 
-const EMAIL = "hello@fasto.co";
+const EMAIL = "hello@fastpost.co";
 
 function CopyIcon() {
   return (

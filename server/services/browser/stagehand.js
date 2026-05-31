@@ -7,7 +7,7 @@ import * as localBrowser from "./localBrowser.js";
 const log = createLogger("stagehand");
 
 export function isConfigured() {
-  return browserUse.isConfigured();
+  return browserUse.isConfigured() || config.browserUse.localBrowser;
 }
 
 // Fallback connect URL (used only when BROWSER_USE_REST_SESSIONS=false). Opens a
@@ -115,8 +115,8 @@ export function sessionUrlFor() {
 // per-call context id.
 export async function createStagehand({ sessionData, onSession } = {}) {
   void sessionData;
-  if (!isConfigured()) {
-    throw new Error("BROWSER_USE_API_KEY required");
+  if (!browserUse.isConfigured() && !config.browserUse.localBrowser) {
+    throw new Error("BROWSER_USE_API_KEY required (or set SIGNUP_LOCAL_BROWSER=1 for local Chrome)");
   }
   const session = await openBrowserUseSession();
   const stagehand = new Stagehand({

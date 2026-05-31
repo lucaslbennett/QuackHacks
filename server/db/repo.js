@@ -58,7 +58,7 @@ export const generations = {
 };
 
 export const influencers = {
-  create: ({
+  create: async ({
     userId,
     name,
     niche,
@@ -68,11 +68,19 @@ export const influencers = {
     imageUrl,
     postsPerDay,
     status = "draft",
-  }) =>
-    one(
+  }) => {
+    let sortOrder = 0;
+    if (userId) {
+      const row = await one(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM influencers WHERE user_id=$1`,
+        [userId]
+      );
+      sortOrder = Number(row?.n ?? 0);
+    }
+    return one(
       `INSERT INTO influencers
-         (user_id, name, niche, handle, questionnaire, persona, image_url, posts_per_day, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+         (user_id, name, niche, handle, questionnaire, persona, image_url, posts_per_day, sort_order, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         userId || null,
         name,
@@ -82,16 +90,31 @@ export const influencers = {
         persona || {},
         imageUrl || null,
         postsPerDay || 2,
+        sortOrder,
         status,
       ]
-    ),
+    );
+  },
   get: (id) => one(`SELECT * FROM influencers WHERE id=$1`, [id]),
   list: () => many(`SELECT * FROM influencers ORDER BY created_at DESC`),
   listForUser: (userId) =>
     many(
-      `SELECT * FROM influencers WHERE user_id=$1 ORDER BY created_at DESC`,
+      `SELECT * FROM influencers WHERE user_id=$1 ORDER BY sort_order ASC, created_at DESC`,
       [userId]
     ),
+  reorderForUser: async (userId, orderedIds) => {
+    const owned = await many(`SELECT id FROM influencers WHERE user_id=$1`, [userId]);
+    const ownedSet = new Set(owned.map((r) => r.id));
+    for (const id of orderedIds) {
+      if (!ownedSet.has(id)) throw new Error("forbidden");
+    }
+    for (let i = 0; i < orderedIds.length; i++) {
+      await query(
+        `UPDATE influencers SET sort_order=$1, updated_at=now() WHERE id=$2 AND user_id=$3`,
+        [i, orderedIds[i], userId]
+      );
+    }
+  },
   update: (id, fields) => {
     const keys = Object.keys(fields);
     if (!keys.length) return influencers.get(id);
@@ -152,6 +175,30 @@ export const content = {
       `SELECT * FROM content_items WHERE influencer_id=$1 ORDER BY created_at DESC LIMIT 100`,
       [influencerId]
     ),
+  // Joins each content row with its posts record so the UI can show scheduled/posted times.
+  listForWithPostTimes: async (influencerId) => {
+    const [items, postRows] = await Promise.all([
+      content.listFor(influencerId),
+      posts.listFor(influencerId),
+    ]);
+    const byContent = new Map();
+    for (const p of postRows) {
+      if (!p.content_id) continue;
+      const prev = byContent.get(p.content_id);
+      if (!prev || new Date(p.posted_at).getTime() >= new Date(prev.posted_at).getTime()) {
+        byContent.set(p.content_id, p);
+      }
+    }
+    return items.map((item) => {
+      const row = byContent.get(item.id);
+      if (!row) return item;
+      return {
+        ...item,
+        scheduled_at: row.scheduled_at || null,
+        posted_at: row.posted_at || null,
+      };
+    });
+  },
   update: (id, fields) => {
     const keys = Object.keys(fields);
     const sets = keys.map((k, i) => `${k}=$${i + 2}`);
@@ -238,6 +285,12 @@ export const jobs = {
     many(
       `SELECT * FROM jobs WHERE influencer_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [influencerId]
+    ),
+  cancelPending: (influencerId, types) =>
+    query(
+      `DELETE FROM jobs
+       WHERE influencer_id=$1 AND status='pending' AND type = ANY($2::text[])`,
+      [influencerId, types]
     ),
   // Atomically claim the next due job.
   claimNext: async () =>

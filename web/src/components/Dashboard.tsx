@@ -3,6 +3,7 @@ import { useAuth } from "../lib/authContext";
 import {
   getInfluencer,
   listMyInfluencers,
+  reorderInfluencers,
   type ContentItem,
   type Influencer,
 } from "../lib/influencers";
@@ -14,6 +15,7 @@ import {
 import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
 import InfluencerImage from "./InfluencerImage";
+import { postTimeCaption } from "../lib/postTime";
 
 interface DashboardProps {
   // Launches the influencer creator, optionally with a composer prompt.
@@ -85,6 +87,19 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     listMyInfluencers().then(setInfluencers);
   };
 
+  const handleReorder = async (order: string[]) => {
+    const byId = new Map(influencers.map((i) => [i.id, i]));
+    const reordered = order
+      .map((id) => byId.get(id))
+      .filter((i): i is Influencer => Boolean(i));
+    setInfluencers(reordered);
+    try {
+      await reorderInfluencers(order);
+    } catch {
+      refreshInfluencers();
+    }
+  };
+
   const handleInfluencerDeleted = () => {
     setSelected(null);
     refreshInfluencers();
@@ -97,6 +112,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
       selectedId={selected?.id ?? null}
       onSelect={openInfluencer}
       onCreate={() => onCreate?.()}
+      onReorder={handleReorder}
     />
   );
 
@@ -147,12 +163,29 @@ function InfluencerList({
   selectedId,
   onSelect,
   onCreate,
+  onReorder,
 }: {
   influencers: Influencer[];
   selectedId: string | null;
   onSelect: (inf: Influencer) => void;
   onCreate: () => void;
+  onReorder: (order: string[]) => void;
 }) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
+  const moveItem = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const ids = influencers.map((i) => i.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    const next = [...ids];
+    next.splice(from, 1);
+    next.splice(to, 0, fromId);
+    onReorder(next);
+  };
+
   return (
     <div className="flex flex-col gap-1">
       <button
@@ -168,41 +201,94 @@ function InfluencerList({
           No influencers yet. Create one to get started.
         </p>
       ) : (
-        influencers.map((inf) => {
-          const label = inf.persona?.displayName || inf.name;
-          const niche = inf.persona?.niche || inf.niche;
-          const isSel = inf.id === selectedId;
-          return (
-            <button
-              key={inf.id}
-              type="button"
-              onClick={() => onSelect(inf)}
-              className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                isSel ? "bg-neutral-200/70" : "hover:bg-neutral-200/50"
-              }`}
-            >
-              <InfluencerImage
-                src={inf.image_url}
-                name={label}
-                className="h-9 w-9 shrink-0 rounded-md object-cover"
-                fallbackClassName="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-200 text-[13px] text-neutral-500"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-neutral-900">
-                  {label}
-                </p>
-                {niche && (
-                  <p className="truncate text-[11px] capitalize text-neutral-400">
-                    {niche}
-                  </p>
-                )}
+        <>
+          <p className="mb-1 px-2 text-[11px] text-neutral-400">Drag to reorder</p>
+          {influencers.map((inf) => {
+            const label = inf.persona?.displayName || inf.name;
+            const niche = inf.persona?.niche || inf.niche;
+            const isSel = inf.id === selectedId;
+            const isDragging = inf.id === dragId;
+            const isOver = inf.id === overId && dragId !== inf.id;
+            return (
+              <div
+                key={inf.id}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragId && dragId !== inf.id) setOverId(inf.id);
+                }}
+                onDragLeave={() => {
+                  if (overId === inf.id) setOverId(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragId) moveItem(dragId, inf.id);
+                  setDragId(null);
+                  setOverId(null);
+                }}
+                className={`flex items-center gap-1 rounded-lg transition-colors ${
+                  isOver ? "bg-neutral-200/80 ring-1 ring-neutral-300" : ""
+                } ${isDragging ? "opacity-40" : ""}`}
+              >
+                <span
+                  draggable
+                  onDragStart={(e) => {
+                    setDragId(inf.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", inf.id);
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setOverId(null);
+                  }}
+                  aria-label={`Reorder ${label}`}
+                  className="flex shrink-0 cursor-grab touch-none items-center justify-center px-1 py-2 text-neutral-300 transition-colors hover:text-neutral-500 active:cursor-grabbing"
+                >
+                  <GripIcon />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onSelect(inf)}
+                  className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-1.5 py-2 text-left transition-colors ${
+                    isSel ? "bg-neutral-200/70" : "hover:bg-neutral-200/50"
+                  }`}
+                >
+                  <InfluencerImage
+                    src={inf.image_url}
+                    name={label}
+                    className="h-9 w-9 shrink-0 rounded-md object-cover"
+                    fallbackClassName="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-200 text-[13px] text-neutral-500"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-neutral-900">
+                      {label}
+                    </p>
+                    {niche && (
+                      <p className="truncate text-[11px] capitalize text-neutral-400">
+                        {niche}
+                      </p>
+                    )}
+                  </div>
+                  <StatusDot status={inf.status} />
+                </button>
               </div>
-              <StatusDot status={inf.status} />
-            </button>
-          );
-        })
+            );
+          })}
+        </>
       )}
     </div>
+  );
+}
+
+function GripIcon() {
+  return (
+    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
+      <circle cx="2" cy="2" r="1.5" />
+      <circle cx="8" cy="2" r="1.5" />
+      <circle cx="2" cy="8" r="1.5" />
+      <circle cx="8" cy="8" r="1.5" />
+      <circle cx="2" cy="14" r="1.5" />
+      <circle cx="8" cy="14" r="1.5" />
+    </svg>
   );
 }
 
@@ -535,6 +621,7 @@ function Content({ influencers }: { influencers: Influencer[] }) {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((it) => {
             const image = it.image_paths?.[0] || it.authorImage;
+            const timeLabel = postTimeCaption(it);
             return (
               <div
                 key={it.id}
@@ -554,9 +641,14 @@ function Content({ influencers }: { influencers: Influencer[] }) {
                   <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-neutral-600">
                     {it.caption || it.title || "Untitled post"}
                   </p>
-                  <span className="mt-2 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] capitalize text-neutral-500">
-                    {it.status}
-                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] capitalize text-neutral-500">
+                      {it.status}
+                    </span>
+                    {timeLabel && (
+                      <span className="text-[11px] text-neutral-400">{timeLabel}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             );

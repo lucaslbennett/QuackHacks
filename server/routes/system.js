@@ -41,6 +41,53 @@ router.get("/status", async (req, res) => {
   });
 });
 
+const PROXY_IMAGE_HOST =
+  /(?:^|\.)cdninstagram\.com$|(?:^|\.)fbcdn\.net$|(?:^|\.)instagram\.com$/i;
+
+// Proxy Instagram CDN images so the dashboard can display scraped thumbnails
+// (Instagram blocks hotlinking from other origins).
+router.get("/proxy-image", async (req, res) => {
+  const raw = req.query.url;
+  if (!raw || typeof raw !== "string") {
+    return res.status(400).send("url required");
+  }
+  let target;
+  try {
+    target = new URL(raw);
+  } catch {
+    return res.status(400).send("invalid url");
+  }
+  if (target.protocol !== "https:" && target.protocol !== "http:") {
+    return res.status(400).send("invalid protocol");
+  }
+  if (!PROXY_IMAGE_HOST.test(target.hostname)) {
+    return res.status(403).send("forbidden host");
+  }
+
+  try {
+    const upstream = await fetch(target.toString(), {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.instagram.com/",
+        Accept: "image/*,*/*;q=0.8",
+      },
+      redirect: "follow",
+    });
+    if (!upstream.ok) {
+      return res.status(upstream.status).send("upstream error");
+    }
+    const ct = upstream.headers.get("content-type") || "image/jpeg";
+    res.setHeader("Content-Type", ct);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.send(buf);
+  } catch (err) {
+    log.warn("proxy-image failed:", err.message);
+    res.status(502).send("fetch failed");
+  }
+});
+
 // Smoke test: generate a persona without persisting.
 router.post("/smoke/persona", async (req, res) => {
   try {

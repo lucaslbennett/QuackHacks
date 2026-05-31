@@ -69,8 +69,8 @@ export default function AuthModal({
         </h2>
         <p className="mb-6 text-[13px] text-black/50">
           {isSignup
-            ? "Sign up to get started with Fasto."
-            : "Log in to your Fasto account."}
+            ? "Sign up to get started with Fastpost."
+            : "Log in to your Fastpost account."}
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">

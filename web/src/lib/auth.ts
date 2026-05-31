@@ -8,7 +8,7 @@ export interface User {
   updated_at?: string;
 }
 
-const TOKEN_KEY = "fasto.token";
+const TOKEN_KEY = "fastpost.token";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

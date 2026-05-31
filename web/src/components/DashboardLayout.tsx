@@ -58,12 +58,12 @@ export default function DashboardLayout({
         className="mb-8 flex items-center gap-2 px-1"
         title="Back to home"
       >
-        <img src="/images/fasto-logo.png" alt="Fasto" className="h-6 w-auto" />
+        <img src="/images/fastpost-logo.png" alt="Fastpost" className="h-6 w-auto" />
         <span
           className="text-[22px] font-semibold tracking-tight text-neutral-900"
           style={{ fontFamily: "var(--font-heading)" }}
         >
-          Fasto
+          Fastpost
         </span>
       </button>
 
@@ -160,12 +160,12 @@ export default function DashboardLayout({
       {/* Mobile top bar */}
       <div className="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-neutral-200 bg-white px-5 py-3 md:hidden">
         <button type="button" onClick={onHome} className="flex items-center gap-2">
-          <img src="/images/fasto-logo.png" alt="Fasto" className="h-6 w-auto" />
+          <img src="/images/fastpost-logo.png" alt="Fastpost" className="h-6 w-auto" />
           <span
             className="text-[20px] font-semibold tracking-tight"
             style={{ fontFamily: "var(--font-heading)" }}
           >
-            Fasto
+            Fastpost
           </span>
         </button>
         <button

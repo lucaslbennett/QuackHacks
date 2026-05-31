@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS influencers (
   questionnaire JSONB NOT NULL DEFAULT '{}'::jsonb,
   voice_id    TEXT,
   posts_per_day INT NOT NULL DEFAULT 2,
+  sort_order    INT NOT NULL DEFAULT 0,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -63,6 +64,16 @@ CREATE TABLE IF NOT EXISTS influencers (
 -- settings block. Added after the initial release; null until linked.
 ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_integration_id TEXT;
 ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_platform TEXT NOT NULL DEFAULT 'instagram';
+
+-- Per-influencer autopilot posting schedule (fixed daily times or random interval).
+-- Shape: { enabled, mode: "fixed"|"random"|"off", timezone, times[], intervalMinutes, nextRunAt }
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS posting_schedule JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- User-defined roster order in the dashboard sidebar (lower = higher).
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0;
+
+-- Cached live Instagram scrape for the Live profile tab (bio, stats, thumbnails).
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS ig_profile_cache JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- Influencers created from the onboarding quiz funnel belong to a user and keep
 -- their generated portrait. Added after the initial release; null for older
@@ -150,7 +161,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   influencer_id UUID REFERENCES influencers(id) ON DELETE CASCADE,
   type          TEXT NOT NULL,
-  -- clone_persona | spawn_account | generate_content | post_content | schedule_postiz | scrape_metrics
+  -- clone_persona | spawn_account | generate_content | post_content | schedule_postiz | auto_post_postiz | scrape_metrics
   payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
   status        TEXT NOT NULL DEFAULT 'pending',
   -- pending | running | done | failed

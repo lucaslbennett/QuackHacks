@@ -27,6 +27,9 @@ import {
   type InfluencerAnalytics,
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
+import PostingScheduleModal from "./PostingScheduleModal";
+import type { PostingScheduleSummary } from "../lib/influencers";
+import { postTimeCaption } from "../lib/postTime";
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -297,8 +300,6 @@ export default function InfluencerPanel({
           [
             ["content", "Content & posting"],
             ["analytics", "Analytics"],
-            // Account connection comes later; kept last so the focus stays on
-            // creating and running the character itself.
             ["account", "Account setup"],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -321,7 +322,9 @@ export default function InfluencerPanel({
         <ContentTab
           influencer={influencer}
           content={content}
-          onPosted={(item) => setContent((c) => [item, ...c])}
+          onPosted={(item) => {
+            setContent((c) => [item, ...c]);
+          }}
           onConnectAccount={() => setTab("account")}
           onViewAnalytics={() => setTab("analytics")}
           onHandleSaved={(h) =>
@@ -335,8 +338,6 @@ export default function InfluencerPanel({
           influencer={influencer}
           onLinked={(link) => {
             applyLink(link);
-            // Refresh panel-level channels so the header bar can resolve the
-            // newly linked account's handle/avatar.
             loadChannels();
           }}
         />
@@ -527,6 +528,30 @@ function ContentTab({
   const [loading, setLoading] = useState(false); // generating a preview
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleSummary, setScheduleSummary] = useState<PostingScheduleSummary | null>(
+    () => {
+      const s = influencer.posting_schedule;
+      if (s?.enabled) {
+        return {
+          active: true,
+          mode: s.mode === "random" ? "random" : "fixed",
+          summary:
+            s.mode === "random"
+              ? s.intervalMinutes === 5
+                ? "Every ~5 min"
+                : s.intervalMinutes === 60
+                  ? "Every ~1h"
+                  : s.intervalMinutes === 1440
+                    ? "Every ~24h"
+                    : `Every ~${(s.intervalMinutes ?? 360) / 60}h`
+              : `Daily at ${(s.times || []).join(" & ")}`,
+          nextRunAt: s.nextRunAt,
+        };
+      }
+      return null;
+    },
+  );
   const name = influencer.persona?.displayName || influencer.name;
   const isLinked = Boolean(influencer.postiz_integration_id);
 
@@ -565,6 +590,7 @@ function ContentTab({
           video_path: null,
           status: "posted",
           created_at: new Date().toISOString(),
+          posted_at: new Date().toISOString(),
         });
       }
     } catch (e) {
@@ -589,23 +615,52 @@ function ContentTab({
         >
           Create a post
         </h2>
-        <button
-          onClick={handleGenerate}
-          disabled={loading || publishing || !isLinked}
-          title={
-            isLinked
-              ? undefined
-              : "Connect a Postiz channel in Account setup before publishing"
-          }
-          className="rounded-full bg-black px-5 py-2.5 text-[14px] font-medium text-white transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading
-            ? "Generating…"
-            : preview || post
-              ? "Generate another"
-              : "Generate post"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSchedule(true)}
+            className="rounded-full border border-black/20 px-5 py-2.5 text-[14px] font-medium transition hover:bg-black hover:text-white"
+          >
+            Posting schedule
+            {scheduleSummary?.active && (
+              <span className="ml-1.5 inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            )}
+          </button>
+          <button
+            onClick={handleGenerate}
+            disabled={loading || publishing || !isLinked}
+            title={
+              isLinked
+                ? undefined
+                : "Connect a Postiz channel in Account setup before publishing"
+            }
+            className="rounded-full bg-black px-5 py-2.5 text-[14px] font-medium text-white transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading
+              ? "Generating…"
+              : preview || post
+                ? "Generate another"
+                : "Generate post"}
+          </button>
+        </div>
       </div>
+      {scheduleSummary?.active && (
+        <p className="mb-3 text-[13px] text-emerald-700">
+          Autopilot on — {scheduleSummary.summary}
+          {scheduleSummary.nextRunAt && (
+            <>
+              {" "}
+              · next around{" "}
+              {new Date(scheduleSummary.nextRunAt).toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </>
+          )}
+        </p>
+      )}
       <div className="mb-4 flex items-center gap-2 text-[13px] text-black/50">
         <span>Posting as</span>
         <EditableHandle
@@ -797,6 +852,15 @@ function ContentTab({
         </div>
       )}
 
+      {showSchedule && (
+        <PostingScheduleModal
+          influencerId={influencer.id}
+          isLinked={isLinked}
+          onClose={() => setShowSchedule(false)}
+          onSaved={(summary) => setScheduleSummary(summary.active ? summary : null)}
+        />
+      )}
+
       {/* Content history */}
       <h2
         className="mb-4 mt-12 text-[22px] sm:text-[26px]"
@@ -814,6 +878,7 @@ function ContentTab({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {content.map((item) => {
             const img = item.image_paths?.[0];
+            const timeLabel = postTimeCaption(item);
             return (
               <div
                 key={item.id}
@@ -830,9 +895,14 @@ function ContentTab({
                   <p className="line-clamp-3 text-[13px] leading-relaxed text-black/70">
                     {item.caption || item.title || "Untitled post"}
                   </p>
-                  <span className="mt-2 inline-block rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-black/50">
-                    {item.status}
-                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-block rounded-full bg-black/5 px-2 py-0.5 text-[11px] capitalize text-black/50">
+                      {item.status}
+                    </span>
+                    {timeLabel && (
+                      <span className="text-[11px] text-black/45">{timeLabel}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -969,7 +1039,6 @@ function AccountTab({
           const fresh = list.find((c) => !before.has(c.id));
           if (fresh) {
             if (popup && !popup.closed) popup.close();
-            // Auto-link the just-connected account to this influencer.
             await link(fresh);
             return;
           }

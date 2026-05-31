@@ -2,6 +2,9 @@ import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as postiz from "../services/postiz.js";
 import { mediaUrl, persistInfluencerProfileImage } from "../lib/util.js";
+import { validateScheduleInput, formatScheduleSummary, normalizeSchedule } from "../lib/schedule.js";
+import { replanInfluencer } from "../jobs/postingSchedule.js";
+import { computeLiveProfile } from "../lib/liveProfile.js";
 import { requireAuth } from "../lib/auth.js";
 
 const router = Router();
@@ -104,6 +107,20 @@ router.get(
       })
     );
     res.json({ ok: true, influencers: summarized });
+  })
+);
+
+// Persist the user's custom influencer roster order (dashboard sidebar).
+router.put(
+  "/reorder",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const order = req.body.order;
+    if (!Array.isArray(order) || !order.every((id) => typeof id === "string" && id)) {
+      return res.status(400).json({ ok: false, error: "order must be an array of influencer ids" });
+    }
+    await repo.influencers.reorderForUser(req.user.id, order);
+    res.json({ ok: true });
   })
 );
 
@@ -269,7 +286,7 @@ router.get(
     const [sources, account, content, posts, metrics, jobs] = await Promise.all([
       repo.sourceAccounts.listFor(influencer.id),
       repo.igAccounts.forInfluencer(influencer.id),
-      repo.content.listFor(influencer.id),
+      repo.content.listForWithPostTimes(influencer.id),
       repo.posts.listFor(influencer.id),
       repo.metrics.dailyTotals(influencer.id),
       repo.jobs.listFor(influencer.id),
@@ -287,6 +304,19 @@ router.get(
       metrics,
       jobs,
     });
+  })
+);
+
+// Live profile card for the Account tab (avatar, stats, bio, post grid).
+router.get(
+  "/:id/live-profile",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const influencer = await loadOwned(req, res);
+    if (!influencer) return;
+    const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+    const profile = await computeLiveProfile(influencer, { refresh });
+    res.json({ ok: true, profile });
   })
 );
 
@@ -321,6 +351,7 @@ router.patch(
       "voice_id",
       "postiz_integration_id",
       "postiz_platform",
+      "posting_schedule",
       "persona",
       "questionnaire",
     ];
@@ -411,6 +442,60 @@ router.delete(
         postiz_integration_id: influencer.postiz_integration_id,
         postiz_platform: influencer.postiz_platform,
       },
+    });
+  })
+);
+
+// Get the influencer's autopilot posting schedule.
+router.get(
+  "/:id/schedule",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const influencer = await loadOwned(req, res);
+    if (!influencer) return;
+    const schedule = normalizeSchedule(influencer.posting_schedule);
+    res.json({
+      ok: true,
+      schedule,
+      summary: formatScheduleSummary(schedule),
+      canAutopilot: Boolean(influencer.postiz_integration_id),
+    });
+  })
+);
+
+// Save autopilot posting schedule and replan pending jobs.
+router.put(
+  "/:id/schedule",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
+
+    const validated = validateScheduleInput(req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ ok: false, error: validated.error });
+    }
+
+    if (validated.schedule.enabled && !owned.postiz_integration_id) {
+      return res.status(400).json({
+        ok: false,
+        error: "Link an Instagram account before turning on autopilot.",
+      });
+    }
+
+    const influencer = await repo.influencers.update(req.params.id, {
+      posting_schedule: validated.schedule,
+      // Autopilot implies the influencer is actively posting.
+      status: validated.schedule.enabled ? "active" : owned.status,
+    });
+
+    const plan = await replanInfluencer(influencer.id);
+    res.json({
+      ok: true,
+      schedule: normalizeSchedule(influencer.posting_schedule),
+      summary: plan.schedule,
+      planned: plan.planned,
+      warning: plan.warning || null,
     });
   })
 );

@@ -16,6 +16,7 @@ export interface Influencer {
   // Linked Postiz channel (null until connected); platform drives the post.
   postiz_integration_id: string | null;
   postiz_platform: string | null;
+  posting_schedule?: PostingSchedule;
   created_at: string;
   // Present on the list summary.
   accountStatus?: string | null;
@@ -34,6 +35,9 @@ export interface ContentItem {
   videoUrl?: string | null;
   status: string;
   created_at: string;
+  updated_at?: string;
+  scheduled_at?: string | null;
+  posted_at?: string | null;
 }
 
 export interface InfluencerAccount {
@@ -50,6 +54,60 @@ export interface MetricsDay {
   likes: number;
   comments: number;
   followers: number;
+}
+
+export interface PostingSchedule {
+  enabled: boolean;
+  mode: "off" | "fixed" | "random";
+  timezone: string;
+  times: string[];
+  intervalMinutes: 5 | 60 | 360 | 1440;
+  intervalHours?: number;
+  nextRunAt: string | null;
+}
+
+export interface PostingScheduleSummary {
+  active: boolean;
+  mode?: "fixed" | "random";
+  summary: string;
+  times?: string[];
+  timezone?: string;
+  intervalMinutes?: number;
+  intervalHours?: number;
+  nextRunAt?: string | null;
+}
+
+export interface LiveProfilePost {
+  id: string;
+  imageUrl: string;
+  caption: string | null;
+  status: string;
+  source: string;
+  publishedAt: string | null;
+}
+
+export interface LiveProfile {
+  linked: boolean;
+  displayName: string;
+  handle: string | null;
+  bio: string | null;
+  bioSource: string;
+  profilePicture: string | null;
+  profilePictureSource: string;
+  channelUrl: string | null;
+  stats: { posts: number; followers: number | null; following: number | null };
+  live: {
+    followers: boolean;
+    following: boolean;
+    bio: boolean;
+    profilePicture: boolean;
+    posts: boolean;
+    instagram?: boolean;
+  };
+  posts: LiveProfilePost[];
+  limitations: string[];
+  scrapedAt?: string | null;
+  canScrapeInstagram?: boolean;
 }
 
 export interface InfluencerDetail {
@@ -90,6 +148,33 @@ export async function listMyInfluencers(): Promise<Influencer[]> {
   if (!res.ok) return [];
   const data = await res.json().catch(() => ({ ok: false }));
   return data.ok ? (data.influencers as Influencer[]) : [];
+}
+
+export async function getLiveProfile(
+  influencerId: string,
+  opts?: { refresh?: boolean },
+): Promise<LiveProfile> {
+  const qs = opts?.refresh ? "?refresh=1" : "";
+  const res = await fetch(`/api/influencers/${influencerId}/live-profile${qs}`, {
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.profile) {
+    throw new Error(data.error || `Failed to load live profile (${res.status})`);
+  }
+  return data.profile as LiveProfile;
+}
+
+export async function reorderInfluencers(order: string[]): Promise<void> {
+  const res = await fetch("/api/influencers/reorder", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ order }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to reorder (${res.status})`);
+  }
 }
 
 // Auth required: link an influencer to a connected Postiz channel so its posts
@@ -206,5 +291,50 @@ export async function getInfluencer(id: string): Promise<InfluencerDetail> {
     content: data.content || [],
     posts: data.posts || [],
     metrics: data.metrics || [],
+  };
+}
+
+export async function getPostingSchedule(influencerId: string): Promise<{
+  schedule: PostingSchedule;
+  summary: PostingScheduleSummary;
+  canAutopilot: boolean;
+}> {
+  const res = await fetch(`/api/influencers/${influencerId}/schedule`, {
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to load schedule (${res.status})`);
+  }
+  return {
+    schedule: data.schedule,
+    summary: data.summary,
+    canAutopilot: Boolean(data.canAutopilot),
+  };
+}
+
+export async function savePostingSchedule(
+  influencerId: string,
+  schedule: Partial<PostingSchedule> & { enabled: boolean; mode: "fixed" | "random" | "off" },
+): Promise<{
+  schedule: PostingSchedule;
+  summary: PostingScheduleSummary;
+  planned: number;
+  warning: string | null;
+}> {
+  const res = await fetch(`/api/influencers/${influencerId}/schedule`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(schedule),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to save schedule (${res.status})`);
+  }
+  return {
+    schedule: data.schedule,
+    summary: data.summary,
+    planned: data.planned ?? 0,
+    warning: data.warning ?? null,
   };
 }

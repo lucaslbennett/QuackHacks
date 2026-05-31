@@ -38,15 +38,15 @@ export default function Navbar({
         {/* Logo */}
         <div className="flex items-center gap-2">
           <img
-            src="/images/fasto-logo.png"
-            alt="Fasto logo"
+            src="/images/fastpost-logo.png"
+            alt="Fastpost logo"
             className="h-6 w-auto sm:h-7"
           />
           <span
             className="text-[26px] tracking-tight text-black sm:text-[32px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
-            Fasto
+            Fastpost
           </span>
         </div>
 

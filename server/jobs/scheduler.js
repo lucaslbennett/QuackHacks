@@ -2,28 +2,30 @@ import cron from "node-cron";
 import * as repo from "../db/repo.js";
 import { config } from "../config.js";
 import { randomizedPostTimes } from "../lib/util.js";
+import { normalizeSchedule } from "../lib/schedule.js";
+import { replanAllEnabled } from "./postingSchedule.js";
 import { createLogger, formatError } from "../lib/logger.js";
 
 const log = createLogger("scheduler");
 
 const tasks = [];
 
-// Plans a day of randomized content jobs for every active influencer.
-// For each scheduled slot we enqueue a generate job now and a post job at the
-// randomized time, so the reel is rendered ahead of its publish moment.
+// Legacy global planner: random times spread across the day for active
+// influencers that do NOT have per-influencer autopilot enabled.
 export async function planDailyContent() {
   const all = await repo.influencers.list();
-  const active = all.filter((i) => i.status === "active");
-  log.info(`Planning daily content for ${active.length} active influencer(s)`);
+  const active = all.filter((i) => {
+    if (i.status !== "active") return false;
+    const schedule = normalizeSchedule(i.posting_schedule);
+    return !schedule.enabled;
+  });
+  log.info(`Planning legacy daily content for ${active.length} active influencer(s)`);
 
   for (const inf of active) {
     const count = Math.max(1, inf.posts_per_day || 2);
     const times = randomizedPostTimes(count);
-    // Route through Postiz when enabled and the influencer is linked to a
-    // channel; otherwise fall back to the direct Stagehand IG poster.
     const viaPostiz = config.scheduler.usePostiz && Boolean(inf.postiz_integration_id);
     for (const t of times) {
-      // Render ~20 min before publish; if that's in the past, render now.
       const renderAt = new Date(Math.max(Date.now(), t.getTime() - 20 * 60 * 1000));
       await repo.jobs.enqueue({
         influencerId: inf.id,
@@ -31,7 +33,6 @@ export async function planDailyContent() {
         runAt: renderAt,
       });
       if (viaPostiz) {
-        // Hand the rendered reel to Postiz to publish at the randomized time.
         await repo.jobs.enqueue({
           influencerId: inf.id,
           type: "schedule_postiz",
@@ -39,7 +40,6 @@ export async function planDailyContent() {
           runAt: renderAt,
         });
       } else {
-        // Posts the oldest ready-but-unposted reel at the randomized time.
         await repo.jobs.enqueue({
           influencerId: inf.id,
           type: "post_content",
@@ -68,14 +68,19 @@ export function startScheduler() {
     return;
   }
 
-  // Plan content once each morning.
+  // Per-influencer autopilot: replan every morning + every 30 min for random cadence.
   tasks.push(
     cron.schedule("5 8 * * *", () => {
+      replanAllEnabled().catch((e) => log.error("replanAllEnabled error", formatError(e)));
       planDailyContent().catch((e) => log.error("planDailyContent error", formatError(e)));
     })
   );
+  tasks.push(
+    cron.schedule("*/5 * * * *", () => {
+      replanAllEnabled().catch((e) => log.error("replanAllEnabled tick error", formatError(e)));
+    })
+  );
 
-  // Scrape metrics a few times a day.
   tasks.push(
     cron.schedule("0 */6 * * *", () => {
       planMetrics().catch((e) => log.error("planMetrics error", formatError(e)));
@@ -83,9 +88,7 @@ export function startScheduler() {
   );
 
   log.info(
-    `Scheduler started (daily content @ 08:05, metrics every 6h, posting via ${
-      config.scheduler.usePostiz ? "Postiz" : "Stagehand"
-    })`
+    `Scheduler started (autopilot replan @ 08:05 + every 5m, legacy daily content @ 08:05, metrics every 6h)`
   );
 }
 

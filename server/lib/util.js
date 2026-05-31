@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import { createLogger } from "./logger.js";
@@ -277,6 +277,73 @@ export function mediaUrl(absPath) {
   if (!absPath) return null;
   const rel = path.relative(path.resolve(config.mediaDir), absPath);
   return `/media/${rel.split(path.sep).join("/")}`;
+}
+
+// Normalizes a stored media reference for browser <img src> (relative /media/…).
+export function clientMediaUrl(stored) {
+  if (!stored) return null;
+  const s = String(stored).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/media/")) return s;
+  if (path.isAbsolute(s)) return mediaUrl(s);
+  return s.startsWith("/") ? s : `/media/${s.replace(/^\//, "")}`;
+}
+
+// Parses Instagram-style counts ("71.2k", "2,552", "1.2M") to a number.
+export function parseSocialCount(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const t = String(raw).trim().toLowerCase().replace(/,/g, "");
+  if (!t) return null;
+  const m = t.match(/^([\d.]+)\s*([kmb])?$/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const suffix = m[2];
+  if (suffix === "k") n *= 1_000;
+  else if (suffix === "m") n *= 1_000_000;
+  else if (suffix === "b") n *= 1_000_000_000;
+  return Math.round(n);
+}
+
+const PROXY_IMAGE_HOST =
+  /(?:^|\.)cdninstagram\.com$|(?:^|\.)fbcdn\.net$|(?:^|\.)instagram\.com$/i;
+
+// Rewrites Instagram CDN URLs through our proxy so the browser can load them.
+export function proxiedImageUrl(url) {
+  if (!url) return null;
+  const s = String(url).trim();
+  if (s.startsWith("/media/") || s.startsWith("/api/proxy-image")) return s;
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const host = new URL(s).hostname;
+      if (PROXY_IMAGE_HOST.test(host)) {
+        return `/api/proxy-image?url=${encodeURIComponent(s)}`;
+      }
+    } catch {
+      return null;
+    }
+    return s;
+  }
+  return clientMediaUrl(s);
+}
+
+// Returns a loadable /media URL only when the file exists on disk (or an http URL).
+export async function resolveContentImageUrl(stored) {
+  const url = clientMediaUrl(stored);
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("/media/")) {
+    const rel = url.slice("/media/".length);
+    const abs = path.resolve(config.mediaDir, rel);
+    try {
+      await access(abs);
+      return url;
+    } catch {
+      return null;
+    }
+  }
+  return url;
 }
 
 // Like mediaUrl but absolute, so external services (e.g. Postiz) can fetch it.

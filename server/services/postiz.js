@@ -154,6 +154,18 @@ export async function findNextSlot(integrationId) {
   return data?.date || null;
 }
 
+// Lists posts in a date window. Filter by integration id client-side.
+export async function listPosts({ startDate, endDate, customer } = {}) {
+  const start =
+    startDate || new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+  const end = endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const qs = new URLSearchParams({ startDate: start, endDate: end });
+  if (customer) qs.set("customer", customer);
+  const data = await postizFetch(`/posts?${qs}`);
+  if (Array.isArray(data)) return data;
+  return data?.posts || [];
+}
+
 // Uploads media from a public URL into Postiz storage. Returns { id, path }.
 export async function uploadFromUrl(url) {
   const data = await postizFetch("/upload-from-url", {

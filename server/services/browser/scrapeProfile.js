@@ -69,7 +69,30 @@ export async function scrapeInstagramProfile(input) {
     }
 
     const result = { url, handle, ...profile, posts, scrapedAt: new Date().toISOString() };
-    log.info("Scraped profile", handle, `${posts.length} posts`);
+
+    // Profile picture + post grid thumbnails from the live page DOM.
+    try {
+      const visuals = await page.evaluate(() => {
+        const headerImg = document.querySelector(
+          'header img[src*="cdninstagram"], header img[src*="fbcdn"], img[alt*="profile picture"]'
+        );
+        const profilePicture = headerImg?.src || null;
+        const thumbs = Array.from(
+          document.querySelectorAll(
+            'a[href*="/p/"] img, a[href*="/reel/"] img, main article img, main a img'
+          )
+        )
+          .map((img) => img.src || img.getAttribute("srcset")?.split(/\s+/)[0])
+          .filter((src) => src && /cdninstagram|fbcdn|instagram/.test(src));
+        return { profilePicture, thumbnails: [...new Set(thumbs)].slice(0, 12) };
+      });
+      if (visuals.profilePicture) result.profilePicture = visuals.profilePicture;
+      if (visuals.thumbnails?.length) result.thumbnails = visuals.thumbnails;
+    } catch (err) {
+      log.warn("thumbnail extraction failed:", err.message);
+    }
+
+    log.info("Scraped profile", handle, `${posts.length} posts`, `${result.thumbnails?.length || 0} thumbs`);
     return result;
   });
 }

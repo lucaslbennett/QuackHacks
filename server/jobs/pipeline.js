@@ -9,7 +9,10 @@ import { scrapeAccountMetrics } from "../services/browser/scrapeMetrics.js";
 import * as postiz from "../services/postiz.js";
 import { generateEmail } from "../services/verification.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
+import { config } from "../config.js";
 import { mediaUrl, publicMediaUrl } from "../lib/util.js";
+import { normalizeSchedule, upcomingFixedSlots } from "../lib/schedule.js";
+import { chainRandomSchedule } from "./postingSchedule.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("pipeline");
@@ -288,6 +291,119 @@ export async function scheduleViaPostiz({ influencerId, contentId, runAt, type }
   return { scheduled: true, postId, postRowId: post.id, scheduledAt: date.toISOString() };
 }
 
+// 4c. Autopilot: generate an image post (same flow as the dashboard preview) and
+// schedule it through Postiz at `publishAt`. Skips manual review — used by the
+// per-influencer posting schedule.
+export async function autoPostViaPostiz({ influencerId, publishAt }) {
+  if (!postiz.isConfigured()) throw new Error("POSTIZ_API_KEY not configured");
+  if (!config.publicBaseUrl) {
+    throw new Error("PUBLIC_BASE_URL not set - Postiz cannot fetch generated images");
+  }
+
+  const influencer = await repo.influencers.get(influencerId);
+  if (!influencer) throw new Error("influencer not found");
+  if (!influencer.postiz_integration_id) {
+    throw new Error("influencer has no linked Postiz channel");
+  }
+
+  const persona = influencer.persona && typeof influencer.persona === "object" ? influencer.persona : {};
+  const built = await gemini.generatePostContent({
+    persona: {
+      ...persona,
+      displayName: persona.displayName || influencer.name,
+      niche: persona.niche || influencer.niche,
+    },
+  });
+  const image = await gemini.generateInfluencerImage({
+    prompt: built.imagePrompt,
+    influencerId: influencer.id,
+    label: "post",
+    frameAsSelfie: built.shotType !== "scene",
+    referenceImage: influencer.image_url || null,
+  });
+
+  const item = await repo.content.create({
+    influencerId,
+    topic: built.title || null,
+    status: "ready",
+  });
+  await repo.content.update(item.id, {
+    title: built.title || null,
+    caption: built.caption,
+    hashtags: built.hashtags || [],
+    image_paths: [image.url],
+    meta: {
+      altText: built.altText,
+      imagePrompt: built.imagePrompt,
+      source: "autopilot",
+    },
+  });
+
+  const platform = influencer.postiz_platform || "instagram";
+  const hashtags = (built.hashtags || []).map((h) => (h.startsWith("#") ? h : `#${h}`));
+  const caption = [built.caption, hashtags.join(" ")].filter(Boolean).join("\n\n");
+
+  const imageRelUrl = image.url;
+  const imagePublicUrl = imageRelUrl.startsWith("http")
+    ? imageRelUrl
+    : `${config.publicBaseUrl}${imageRelUrl}`;
+
+  await repo.content.update(item.id, { status: "scheduling" });
+  const media = await postiz.uploadFromUrl(imagePublicUrl);
+
+  let date = publishAt ? new Date(publishAt) : new Date(Date.now() + 5 * 60 * 1000);
+  if (Number.isNaN(date.getTime()) || date.getTime() < Date.now()) {
+    date = new Date(Date.now() + 5 * 60 * 1000);
+  }
+
+  const { postId } = await postiz.schedulePost({
+    integrationId: influencer.postiz_integration_id,
+    identifier: platform,
+    content: caption,
+    date,
+    media: [media],
+    type: "schedule",
+  });
+
+  await repo.posts.createScheduled({
+    influencerId,
+    contentId: item.id,
+    postizPostId: postId,
+    caption: built.caption,
+    platform,
+    scheduledAt: date,
+  });
+  await repo.content.update(item.id, {
+    status: "scheduled",
+    meta: {
+      altText: built.altText,
+      imagePrompt: built.imagePrompt,
+      source: "autopilot",
+      postizPostId: postId,
+    },
+  });
+
+  const schedule = normalizeSchedule(influencer.posting_schedule);
+  if (schedule.enabled && schedule.mode === "random") {
+    await chainRandomSchedule(influencerId, date);
+  } else if (schedule.enabled && schedule.mode === "fixed") {
+    const next = upcomingFixedSlots(schedule, { fromDate: date, days: 3 })[0];
+    await repo.influencers.update(influencerId, {
+      posting_schedule: {
+        ...schedule,
+        nextRunAt: next ? next.toISOString() : date.toISOString(),
+      },
+    });
+  }
+
+  return {
+    scheduled: true,
+    contentId: item.id,
+    postId,
+    scheduledAt: date.toISOString(),
+  };
+}
+
 // 5. Metrics: scrape views/likes/comments for the influencer's posts.
 export async function scrapeMetrics({ influencerId }) {
   const account = await repo.igAccounts.forInfluencer(influencerId);
@@ -323,5 +439,6 @@ export const handlers = {
   generate_content: generateContent,
   post_content: postContent,
   schedule_postiz: scheduleViaPostiz,
+  auto_post_postiz: autoPostViaPostiz,
   scrape_metrics: scrapeMetrics,
 };
