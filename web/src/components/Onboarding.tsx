@@ -213,9 +213,7 @@ export default function Onboarding({
     <div className="fixed inset-0 z-[55] flex flex-col bg-white text-black">
       {/* Top bar with a way out. */}
       <div className="flex shrink-0 items-center justify-between px-5 pt-24 pb-2 sm:px-8">
-        <span className="text-[13px] uppercase tracking-[0.15em] text-black/40">
-          {phase === "reveal" ? "Your influencer" : ""}
-        </span>
+        <span />
         <button
           type="button"
           onClick={onClose}
