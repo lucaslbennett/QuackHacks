@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { publishViaPostiz, type PublishedPost } from "../lib/generate";
+import {
+  generatePostPreview,
+  publishPostPreview,
+  type PostPreview,
+  type PublishedPost,
+} from "../lib/generate";
 import {
   getInfluencer,
   linkPostizChannel,
@@ -454,21 +459,40 @@ function ContentTab({
   onViewAnalytics: () => void;
   onHandleSaved: (handle: string) => void;
 }) {
+  // Two-step flow: generate a draft (preview) → review → publish.
+  const [preview, setPreview] = useState<PostPreview | null>(null);
   const [post, setPost] = useState<PublishedPost | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // generating a preview
+  const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const name = influencer.persona?.displayName || influencer.name;
   const isLinked = Boolean(influencer.postiz_integration_id);
 
+  // Step 1: generate the image + caption and show it for review (no publish).
   const handleGenerate = async () => {
     setLoading(true);
     setError(null);
+    setPost(null);
     try {
-      // Generate the image + caption, then publish the post live through Postiz.
-      const result = await publishViaPostiz(influencer.id);
+      const result = await generatePostPreview(influencer.id);
+      setPreview(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2: publish the reviewed draft through Postiz.
+  const handlePublish = async () => {
+    if (!preview) return;
+    setPublishing(true);
+    setError(null);
+    try {
+      const result = await publishPostPreview(influencer.id, preview.contentId);
       setPost(result);
-      // Optimistically add the now-published post to the history list (it's
-      // persisted server-side too).
+      setPreview(null);
+      // Add the now-published post to the history list (persisted server-side).
       if (result.contentId) {
         onPosted({
           id: result.contentId,
@@ -482,10 +506,16 @@ function ContentTab({
         });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setError(e instanceof Error ? e.message : "Couldn't publish the post.");
     } finally {
-      setLoading(false);
+      setPublishing(false);
     }
+  };
+
+  // Discard the current draft and start over.
+  const handleDiscard = () => {
+    setPreview(null);
+    setError(null);
   };
 
   return (
@@ -499,7 +529,7 @@ function ContentTab({
         </h2>
         <button
           onClick={handleGenerate}
-          disabled={loading || !isLinked}
+          disabled={loading || publishing || !isLinked}
           title={
             isLinked
               ? undefined
@@ -508,9 +538,9 @@ function ContentTab({
           className="rounded-full bg-black px-5 py-2.5 text-[14px] font-medium text-white transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading
-            ? "Publishing…"
-            : post
-              ? "Generate & publish another"
+            ? "Generating…"
+            : preview || post
+              ? "Generate another"
               : "Generate post"}
         </button>
       </div>
@@ -544,12 +574,12 @@ function ContentTab({
         </div>
       )}
 
-      {!post && !loading && (
+      {!post && !preview && !loading && (
         <div className="rounded-2xl border border-dashed border-black/15 p-10 text-center">
           <p className="text-[14px] text-black/50">
-            Generate a fresh post for {name} and publish it straight to
-            Instagram through Postiz. Each one is saved to this influencer's
-            content below.
+            Generate a fresh post for {name}. You'll get to review the image and
+            caption, then publish it to Instagram through Postiz when you're
+            happy with it.
           </p>
         </div>
       )}
@@ -557,8 +587,84 @@ function ContentTab({
       {loading && (
         <div className="rounded-2xl border border-black/10 p-10 text-center">
           <p className="text-[14px] text-black/50">
-            Rendering the image and publishing through Postiz…
+            Generating the image and caption for review…
           </p>
+        </div>
+      )}
+
+      {/* Step: review the generated draft, then publish or regenerate. */}
+      {preview && !loading && (
+        <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+          <div>
+            <div className="overflow-hidden rounded-2xl border border-black/10">
+              <img
+                src={preview.imageUrl}
+                alt={preview.altText || "Generated post"}
+                className="aspect-square w-full object-cover"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2 rounded-2xl border border-[#5b73d6]/30 bg-[#5b73d6]/5 px-4 py-3">
+              <span
+                aria-hidden
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-[#5b73d6] text-[13px] text-white"
+              >
+                ✎
+              </span>
+              <p className="text-[14px] font-medium text-[#3f54b3]">
+                Review your post before publishing
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 p-4">
+              <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-black/40">
+                Caption
+              </p>
+              <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-black/80">
+                {preview.caption}
+              </p>
+              {preview.hashtagLine && (
+                <p className="mt-3 break-words text-[14px] leading-relaxed text-[#5b73d6]">
+                  {preview.hashtagLine}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handlePublish}
+                disabled={publishing || !isLinked}
+                title={
+                  isLinked
+                    ? undefined
+                    : "Connect a Postiz channel in Account setup before publishing"
+                }
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-5 py-3 text-[14px] font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {publishing ? "Publishing…" : "Publish to Instagram"}
+                {!publishing && <span aria-hidden>↗</span>}
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={publishing}
+                className="rounded-full border border-black/15 px-5 py-3 text-[14px] font-medium text-black/80 transition hover:bg-black/5 disabled:opacity-50"
+              >
+                Regenerate
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscard}
+                disabled={publishing}
+                className="rounded-full px-3 py-3 text-[14px] font-medium text-black/40 transition hover:text-black disabled:opacity-50"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

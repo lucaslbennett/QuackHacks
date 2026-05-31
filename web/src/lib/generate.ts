@@ -152,16 +152,52 @@ export async function generatePost(input: {
   };
 }
 
-// Auth required: generate a Nano Banana Pro image + persona caption for an
-// influencer and publish it immediately through that influencer's linked Postiz
-// channel. The response describes the live post and links to the channel.
-export async function publishViaPostiz(
+// A generated-but-not-yet-published post draft, returned for review before the
+// user chooses to publish it.
+export interface PostPreview {
+  contentId: string;
+  imageUrl: string;
+  caption: string;
+  hashtags: string[];
+  hashtagLine: string;
+  altText: string;
+}
+
+// Auth required: generate a Nano Banana image + persona caption for an
+// influencer and save it as a DRAFT for review (does not publish). Returns the
+// draft's contentId so it can be published after the user reviews it.
+export async function generatePostPreview(
   influencerId: string,
-): Promise<PublishedPost> {
-  const res = await fetch("/api/generate/post-postiz", {
+): Promise<PostPreview> {
+  const res = await fetch("/api/generate/post-preview", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ influencerId }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.imageUrl || !data.contentId) {
+    throw new Error(data.error || `Generation failed (${res.status})`);
+  }
+  return {
+    contentId: data.contentId,
+    imageUrl: data.imageUrl,
+    caption: data.caption ?? "",
+    hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
+    hashtagLine: data.hashtagLine ?? "",
+    altText: data.altText ?? "",
+  };
+}
+
+// Auth required: publish a previously-generated draft (by contentId) through the
+// influencer's linked Postiz channel. Returns the live post + channel link.
+export async function publishPostPreview(
+  influencerId: string,
+  contentId: string,
+): Promise<PublishedPost> {
+  const res = await fetch("/api/generate/post-publish", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ influencerId, contentId }),
   });
   const data = await res.json().catch(() => ({ ok: false }));
   if (!res.ok || data.ok === false || !data.imageUrl) {

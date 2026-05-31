@@ -4,7 +4,7 @@ import * as gemini from "../services/gemini.js";
 import * as postiz from "../services/postiz.js";
 import { config } from "../config.js";
 import { requireAuth, optionalAuth } from "../lib/auth.js";
-import { pick, LAST_NAMES, publicMediaUrl } from "../lib/util.js";
+import { pick, LAST_NAMES } from "../lib/util.js";
 
 const router = Router();
 
@@ -175,44 +175,120 @@ router.post(
   })
 );
 
-// Auth required: generate a post image for an influencer and publish it through
-// Postiz to that influencer's linked channel — Postiz owns the publishing. The
-// photo is rendered with Gemini Nano Banana Pro, the caption + hashtags are
-// built from the persona, and Postiz uploads the image and creates the post
-// immediately ("now"). The published post is persisted to the influencer's
-// content history and posts table, and the response includes a link to the live
-// channel (e.g. the Instagram profile).
-router.post(
-  "/post-postiz",
-  requireAuth,
-  asyncH(async (req, res) => {
-    const influencerId = req.body.influencerId;
-    if (!influencerId) {
-      return res.status(400).json({ ok: false, error: "influencerId is required" });
-    }
+// Shared ownership/config guard for the preview + publish endpoints. Returns
+// the loaded influencer, or null after sending an error response.
+async function loadInfluencerForPost(req, res, { requirePublic = false } = {}) {
+  const influencerId = req.body.influencerId;
+  if (!influencerId) {
+    res.status(400).json({ ok: false, error: "influencerId is required" });
+    return null;
+  }
+  if (!gemini.isConfigured()) {
+    res
+      .status(503)
+      .json({ ok: false, error: "image generation is not configured (GEMINI_API_KEY)" });
+    return null;
+  }
+  if (requirePublic) {
     if (!postiz.isConfigured()) {
-      return res
+      res
         .status(503)
         .json({ ok: false, error: "Postiz is not configured (POSTIZ_API_KEY)" });
-    }
-    if (!gemini.isConfigured()) {
-      return res
-        .status(503)
-        .json({ ok: false, error: "image generation is not configured (GEMINI_API_KEY)" });
+      return null;
     }
     if (!config.publicBaseUrl) {
-      return res.status(503).json({
+      res.status(503).json({
         ok: false,
         error: "PUBLIC_BASE_URL is required so Postiz can fetch generated images",
       });
+      return null;
     }
+  }
+  const inf = await repo.influencers.get(influencerId);
+  if (!inf) {
+    res.status(404).json({ ok: false, error: "influencer not found" });
+    return null;
+  }
+  if (inf.user_id && inf.user_id !== req.user.id) {
+    res.status(403).json({ ok: false, error: "forbidden" });
+    return null;
+  }
+  return inf;
+}
 
-    // Ownership: only the influencer's owner may publish on its behalf.
-    const inf = await repo.influencers.get(influencerId);
-    if (!inf) return res.status(404).json({ ok: false, error: "influencer not found" });
-    if (inf.user_id && inf.user_id !== req.user.id) {
-      return res.status(403).json({ ok: false, error: "forbidden" });
-    }
+// Auth required: generate a post (image + caption) for an influencer and SAVE IT
+// AS A DRAFT for review — does NOT publish. The photo is rendered with Gemini
+// Nano Banana, the caption + hashtags are built from the persona. The draft is
+// stored in the influencer's content history with status "ready" and its id is
+// returned so the client can publish it after the user reviews it.
+router.post(
+  "/post-preview",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const inf = await loadInfluencerForPost(req, res);
+    if (!inf) return;
+
+    const persona = inf.persona && typeof inf.persona === "object" ? inf.persona : {};
+
+    // Build caption + hashtags + an image scene from the persona, then render
+    // the photo.
+    const built = await gemini.generatePostContent({
+      persona: {
+        ...persona,
+        displayName: persona.displayName || inf.name,
+        niche: persona.niche || inf.niche,
+      },
+    });
+    const image = await gemini.generateInfluencerImage({
+      prompt: built.imagePrompt,
+      influencerId: inf.id,
+      label: "post",
+    });
+    const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
+
+    // Persist as a draft ("ready" = generated, not yet published) so it can be
+    // published by id after review.
+    const item = await repo.content.create({
+      influencerId: inf.id,
+      topic: built.title || null,
+      status: "ready",
+    });
+    await repo.content.update(item.id, {
+      title: built.title || null,
+      caption: built.caption,
+      hashtags: built.hashtags || [],
+      image_paths: [image.url],
+      meta: {
+        altText: built.altText,
+        imagePrompt: built.imagePrompt,
+        source: "postiz-preview",
+      },
+    });
+
+    res.json({
+      ok: true,
+      published: false,
+      contentId: item.id,
+      imageUrl: image.url,
+      caption: built.caption,
+      hashtags: built.hashtags,
+      hashtagLine,
+      altText: built.altText,
+    });
+  })
+);
+
+// Auth required: publish a previously-generated draft post (by contentId)
+// through Postiz to the influencer's linked channel. Postiz uploads the draft's
+// image and creates the post immediately ("now"). The content row is marked
+// "posted" and the published post is recorded; the response includes a link to
+// the live channel.
+router.post(
+  "/post-publish",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const inf = await loadInfluencerForPost(req, res, { requirePublic: true });
+    if (!inf) return;
     if (!inf.postiz_integration_id) {
       return res.status(400).json({
         ok: false,
@@ -220,29 +296,33 @@ router.post(
           "This influencer isn't linked to a Postiz channel yet. Connect a channel before publishing.",
       });
     }
+    const contentId = req.body.contentId;
+    if (!contentId) {
+      return res.status(400).json({ ok: false, error: "contentId is required" });
+    }
+    const item = await repo.content.get(contentId);
+    if (!item || item.influencer_id !== inf.id) {
+      return res.status(404).json({ ok: false, error: "post draft not found" });
+    }
+    const imageRelUrl = item.image_paths?.[0];
+    if (!imageRelUrl) {
+      return res.status(400).json({ ok: false, error: "draft has no image" });
+    }
 
-    const persona = inf.persona && typeof inf.persona === "object" ? inf.persona : {};
     const platform = inf.postiz_platform || "instagram";
+    const hashtags = item.hashtags || [];
+    const hashtagLine = hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
+    const caption = [item.caption, hashtagLine].filter(Boolean).join("\n\n");
 
-    // 1) Build caption + hashtags + an image scene from the persona.
-    const built = await gemini.generatePostContent({ persona: {
-      ...persona,
-      displayName: persona.displayName || inf.name,
-      niche: persona.niche || inf.niche,
-    } });
+    // The stored image URL is relative (/media/...); make it absolute so Postiz
+    // can fetch it.
+    const imagePublicUrl = imageRelUrl.startsWith("http")
+      ? imageRelUrl
+      : `${config.publicBaseUrl}${imageRelUrl}`;
 
-    // 2) Render the photo with Nano Banana Pro, then expose the locally stored
-    //    media through the app's public URL so Postiz can fetch it.
-    const image = await gemini.generateInfluencerImage({
-      prompt: built.imagePrompt,
-      influencerId,
-      label: "post",
-    });
-    const imagePublicUrl = publicMediaUrl(image.path);
-    const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
-    const caption = [built.caption, hashtagLine].filter(Boolean).join("\n\n");
+    await repo.content.update(contentId, { status: "posting" });
 
-    // 3) Hand everything to Postiz: upload the image, then publish now.
+    // Upload + publish now.
     const media = await postiz.uploadFromUrl(imagePublicUrl);
     const { postId } = await postiz.schedulePost({
       integrationId: inf.postiz_integration_id,
@@ -253,44 +333,31 @@ router.post(
       type: "now",
     });
 
-    // 4) Resolve a deep link to the live channel (e.g. the IG profile) so the UI
-    //    can show "see it on Instagram".
-    const integration = await postiz.getIntegration(inf.postiz_integration_id).catch(() => null);
+    const integration = await postiz
+      .getIntegration(inf.postiz_integration_id)
+      .catch(() => null);
     const channelUrl = postiz.profileUrl(integration);
 
-    // 5) Persist to the influencer's content history + record the published post.
-    let contentId = null;
+    await repo.content.update(contentId, {
+      status: "posted",
+      meta: {
+        ...(item.meta || {}),
+        source: "postiz-publish",
+        postizPostId: postId,
+        platform,
+      },
+    });
     try {
-      const item = await repo.content.create({
-        influencerId,
-        topic: built.title || null,
-        status: "posted",
-      });
-      await repo.content.update(item.id, {
-        title: built.title || null,
-        caption: built.caption,
-        hashtags: built.hashtags || [],
-        image_paths: [image.url],
-        meta: {
-          altText: built.altText,
-          imagePrompt: built.imagePrompt,
-          source: "postiz-publish",
-          postizPostId: postId,
-          platform,
-        },
-      });
-      contentId = item.id;
       await repo.posts.createPublished({
-        influencerId,
+        influencerId: inf.id,
         contentId,
         postizPostId: postId,
-        caption: built.caption,
+        caption: item.caption,
         platform,
         url: channelUrl,
       });
     } catch (err) {
-      console.error("[generate] post-postiz persist failed:", err);
-      // Non-fatal: the post is already live on Postiz; still return success.
+      console.error("[generate] post-publish persist failed:", err);
     }
 
     res.json({
@@ -299,11 +366,10 @@ router.post(
       contentId,
       postizPostId: postId,
       platform,
-      imageUrl: image.url,
-      caption: built.caption,
-      hashtags: built.hashtags,
+      imageUrl: imageRelUrl,
+      caption: item.caption,
+      hashtags,
       hashtagLine,
-      altText: built.altText,
       channelUrl,
       channelName: integration?.name || integration?.profile || null,
     });
