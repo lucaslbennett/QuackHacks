@@ -39,10 +39,10 @@ export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
     model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
-    // Nano Banana 2 (Gemini 3.1 Flash Image) — fast, high-quality image
-    // generation. GA model id (the -preview variant is deprecated). Override
-    // with GEMINI_IMAGE_MODEL (e.g. gemini-3-pro-image for Nano Banana Pro).
-    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
+    // Nano Banana Pro (Gemini 3 Pro Image) — best quality for humans, references,
+    // and anatomy. Override with GEMINI_IMAGE_MODEL=gemini-3.1-flash-image for
+    // the faster/cheaper Flash lane.
+    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image",
     // Vision model used to OCR Instagram's distorted "Confirm you're human"
     // image-code challenge. Defaults to the main model (our current LLM); set
     // GEMINI_CAPTCHA_MODEL to a stronger vision model if reads are unreliable.
