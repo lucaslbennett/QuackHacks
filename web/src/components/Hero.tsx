@@ -124,22 +124,28 @@ export default function Hero({
           marginRight: composerActive ? "auto" : undefined,
         }}
       >
-        {/* Typewriter text — fades out once the composer is activated. */}
-        <p
-          className="mb-5 min-h-[54px] text-black transition-opacity duration-300 sm:mb-6"
-          style={{
-            fontFamily: "var(--font-heading)",
-            fontSize: "clamp(24px, 5vw, 38px)",
-            lineHeight: 1.25,
-            fontWeight: 400,
-            opacity: composerActive ? 0 : 1,
-          }}
-        >
-          {displayed}
-          {!done && (
-            <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-black" />
-          )}
-        </p>
+        {/* Typewriter text — fades out once the composer is activated. The
+            wrapper reserves a fixed height with the text anchored to the TOP,
+            so the text stays put and simply wraps downward as it types. Overflow
+            is clipped so it can never push the composer and pills down, no
+            matter how many lines the text wraps to. */}
+        <div className="mb-5 flex h-[200px] items-start overflow-hidden sm:mb-6 sm:h-[140px]">
+          <p
+            className="text-black transition-opacity duration-300"
+            style={{
+              fontFamily: "var(--font-heading)",
+              fontSize: "clamp(24px, 5vw, 38px)",
+              lineHeight: 1.25,
+              fontWeight: 400,
+              opacity: composerActive ? 0 : 1,
+            }}
+          >
+            {displayed}
+            {!done && (
+              <span className="animate-blink ml-[2px] inline-block h-[1.1em] w-[2px] align-middle bg-black" />
+            )}
+          </p>
+        </div>
 
         {/* Helper text — types out (matching the main hero text) once settled.
             The wrapper reserves a fixed height with the text anchored to the
