@@ -115,6 +115,15 @@ router.post(
           aesthetic: fallbackPrompt,
         };
 
+    // If the caller owns this influencer, load it now so we can feed its saved
+    // profile photo to the image model as a subject reference — this is what
+    // keeps the post looking like the same person as the profile.
+    let ownedInfluencer = null;
+    if (influencerId && req.user) {
+      const inf = await repo.influencers.get(influencerId);
+      if (inf && inf.user_id === req.user.id) ownedInfluencer = inf;
+    }
+
     const post = await gemini.generatePostContent({ persona: effectivePersona });
 
     // Render the post image from the scene prompt through Gemini Nano Banana.
@@ -126,7 +135,13 @@ router.post(
         .join(". ") ||
       fallbackPrompt;
 
-    const image = await gemini.generateInfluencerImage({ prompt: imagePrompt, label: "post" });
+    const image = await gemini.generateInfluencerImage({
+      prompt: imagePrompt,
+      influencerId: ownedInfluencer?.id,
+      label: "post",
+      frameAsSelfie: post.shotType !== "scene",
+      referenceImage: ownedInfluencer?.image_url || null,
+    });
 
     const hashtagLine = post.hashtags.map((h) => `#${h}`).join(" ");
     // A single block that's trivial to copy and paste into Instagram: caption,
@@ -138,24 +153,21 @@ router.post(
     // "ready" means it's generated and ready to publish. Best-effort: a save
     // failure never blocks returning the generated post to the user.
     let contentId = null;
-    if (influencerId && req.user) {
+    if (ownedInfluencer) {
       try {
-        const inf = await repo.influencers.get(influencerId);
-        if (inf && inf.user_id === req.user.id) {
-          const item = await repo.content.create({
-            influencerId,
-            topic: post.title || null,
-            status: "ready",
-          });
-          await repo.content.update(item.id, {
-            title: post.title || null,
-            caption: post.caption,
-            hashtags: post.hashtags || [],
-            image_paths: [image.url],
-            meta: { altText: post.altText, imagePrompt, source: "quick-post" },
-          });
-          contentId = item.id;
-        }
+        const item = await repo.content.create({
+          influencerId,
+          topic: post.title || null,
+          status: "ready",
+        });
+        await repo.content.update(item.id, {
+          title: post.title || null,
+          caption: post.caption,
+          hashtags: post.hashtags || [],
+          image_paths: [image.url],
+          meta: { altText: post.altText, imagePrompt, source: "quick-post" },
+        });
+        contentId = item.id;
       } catch {
         /* non-fatal: still return the generated post below */
       }
@@ -243,6 +255,8 @@ router.post(
       prompt: built.imagePrompt,
       influencerId: inf.id,
       label: "post",
+      frameAsSelfie: built.shotType !== "scene",
+      referenceImage: inf.image_url || null,
     });
     const hashtagLine = built.hashtags.map((h) => `#${h}`).join(" ");
 

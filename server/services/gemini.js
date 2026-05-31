@@ -1,10 +1,48 @@
 import { writeFile } from "node:fs/promises";
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config.js";
-import { mediaPath, mediaUrl, buildInfluencerImagePrompt } from "../lib/util.js";
+import {
+  mediaPath,
+  mediaUrl,
+  buildInfluencerImagePrompt,
+  loadMediaAsBase64,
+  sleep,
+} from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("gemini");
+
+// Transient errors worth retrying: 429 (RESOURCE_EXHAUSTED / rate limit) and
+// 503 (model overloaded / UNAVAILABLE). These limits are usually short windows,
+// so a few backed-off retries absorb them instead of failing the whole call.
+function isTransient(err) {
+  const message = String(err?.message || err || "");
+  const status = err?.status ?? err?.code;
+  if (status === 429 || status === 503) return true;
+  return /\b(429|503)\b|RESOURCE_EXHAUSTED|UNAVAILABLE|overloaded|rate limit/i.test(message);
+}
+
+// Calls a Gemini generateContent thunk with exponential backoff on transient
+// 429/503 errors. Delays ~0.5s, 1s, 2s, 4s (+jitter); non-transient errors and
+// the final attempt rethrow immediately.
+async function withRetry(fn, { retries = 4, label = "gemini" } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= retries || !isTransient(err)) throw err;
+      const backoff = 500 * 2 ** attempt + Math.floor(Math.random() * 250);
+      log.warn(
+        `${label}: transient error (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoff}ms`,
+        err?.message
+      );
+      await sleep(backoff);
+    }
+  }
+  throw lastErr;
+}
 
 let client = null;
 function getClient() {
@@ -50,19 +88,23 @@ export async function verifyAccess() {
 // most callers keep the default for stable, on-brand output.
 async function completeJson({ system, prompt, maxTokens = 2000, temperature }) {
   const c = getClient();
-  const res = await c.models.generateContent({
-    model: config.gemini.model,
-    contents: prompt,
-    config: {
-      systemInstruction: system,
-      maxOutputTokens: maxTokens,
-      responseMimeType: "application/json",
-      ...(temperature !== undefined ? { temperature } : {}),
-      // Flash-Lite is the lightweight tier; keep thinking off so the whole
-      // token budget is spent on the JSON answer (lower latency + cost).
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  });
+  const res = await withRetry(
+    () =>
+      c.models.generateContent({
+        model: config.gemini.model,
+        contents: prompt,
+        config: {
+          systemInstruction: system,
+          maxOutputTokens: maxTokens,
+          responseMimeType: "application/json",
+          ...(temperature !== undefined ? { temperature } : {}),
+          // Flash-Lite is the lightweight tier; keep thinking off so the whole
+          // token budget is spent on the JSON answer (lower latency + cost).
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      }),
+    { label: "completeJson" }
+  );
   const text = (res.text || "").trim();
   if (!text) throw new Error("Empty response from Gemini");
   return parseJson(text);
@@ -120,20 +162,24 @@ export async function readCaptchaCode({ imageBase64, mimeType = "image/png", hin
     "characters — no spaces, quotes or punctuation.";
   try {
     const c = getClient();
-    const res = await c.models.generateContent({
-      model,
-      contents: [
-        { text: promptText },
-        { inlineData: { mimeType, data: imageBase64 } },
-      ],
-      config: {
-        systemInstruction: system,
-        maxOutputTokens: 200,
-        responseMimeType: "application/json",
-        // Deterministic: we want the single most-likely reading, not variety.
-        temperature: 0,
-      },
-    });
+    const res = await withRetry(
+      () =>
+        c.models.generateContent({
+          model,
+          contents: [
+            { text: promptText },
+            { inlineData: { mimeType, data: imageBase64 } },
+          ],
+          config: {
+            systemInstruction: system,
+            maxOutputTokens: 200,
+            responseMimeType: "application/json",
+            // Deterministic: we want the single most-likely reading, not variety.
+            temperature: 0,
+          },
+        }),
+      { label: "readCaptchaCode" }
+    );
     const text = (res.text || "").trim();
     if (!text) return null;
     let code = "";
@@ -371,13 +417,17 @@ Rules:
 - Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
 - Provide a vivid image generation prompt that matches the persona's appearance/aesthetic
   and depicts a concrete, photo-worthy scene for THIS specific post (not just a portrait).
+- Decide whether THIS post reads best as a self-taken selfie (close, face-forward,
+  phone-in-hand) or as a wider candid scene photo of the person in their setting,
+  and set "shotType" accordingly.
 
 Return JSON with this exact shape:
 {
   "caption": string,            // the post caption, natural, 1-4 short paragraphs, light emoji ok, NO hashtags
   "hashtags": string[10],       // 8-12 relevant hashtags, lowercase, WITHOUT the # symbol
   "imagePrompt": string,        // rich scene description for the post image
-  "altText": string             // short accessibility description of the image
+  "altText": string,            // short accessibility description of the image
+  "shotType": string            // either "selfie" or "scene"
 }`;
 
   const data = await completeJson({
@@ -396,11 +446,14 @@ Return JSON with this exact shape:
     )
   );
 
+  const shotType = String(data.shotType || "").trim().toLowerCase() === "scene" ? "scene" : "selfie";
+
   return {
     caption: String(data.caption || "").trim(),
     hashtags,
     imagePrompt: String(data.imagePrompt || "").trim(),
     altText: String(data.altText || "").trim(),
+    shotType,
     angle,
   };
 }
@@ -424,24 +477,59 @@ function imageGenerationError(err) {
 
 // Generates an influencer image with Nano Banana Pro and saves it locally.
 // Returns { url, path }.
+//
+// `referenceImage` is the influencer's saved profile photo, passed to the image
+// model as a SUBJECT reference so the generated person keeps the same identity
+// (face, hair, skin tone, body) as their profile across posts. It may be a
+// /media URL or absolute path (string), or a preloaded { data, mimeType }
+// object. When provided, the prompt is reframed to "same person, new scene".
+// `frameAsSelfie` toggles selfie vs. candid framing in the style wrapper.
 export async function generateInfluencerImage({
   prompt,
   influencerId,
   label = "influencer",
   aspectRatio = "1:1",
   frameAsSelfie = true,
+  referenceImage = null,
 }) {
   const c = getClient();
   log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
 
-  const fullPrompt = frameAsSelfie ? buildInfluencerImagePrompt(prompt) : prompt;
+  // Resolve the reference photo (if any) into inline base64 the model can read.
+  let reference = null;
+  if (referenceImage) {
+    reference =
+      typeof referenceImage === "string"
+        ? await loadMediaAsBase64(referenceImage)
+        : referenceImage?.data
+          ? referenceImage
+          : null;
+    if (referenceImage && !reference) {
+      log.warn("reference image could not be loaded; generating without it");
+    }
+  }
+
+  const fullPrompt = buildInfluencerImagePrompt(prompt, {
+    hasReference: Boolean(reference),
+    selfie: frameAsSelfie,
+  });
+
+  // When a reference photo is supplied, send it alongside the prompt so the
+  // model conditions on the actual person rather than re-inventing them from
+  // text. Same inlineData mechanism used by the CAPTCHA reader above.
+  const contents = reference
+    ? [
+        { inlineData: { mimeType: reference.mimeType || "image/png", data: reference.data } },
+        { text: fullPrompt },
+      ]
+    : fullPrompt;
 
   const isLegacyFlash = config.gemini.imageModel === "gemini-2.5-flash-image";
   let res;
   try {
     res = await c.models.generateContent({
       model: config.gemini.imageModel,
-      contents: fullPrompt,
+      contents,
       config: {
         responseModalities: ["IMAGE"],
         imageConfig: {

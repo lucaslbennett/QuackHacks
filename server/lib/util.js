@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 
@@ -26,20 +26,28 @@ export const LAST_NAMES = [
   "Delgado", "Bauer", "Khan", "Moreau", "Costa", "Abdi", "Walsh", "Sato",
 ];
 
-// Wraps a per-influencer description in a fixed style frame so every portrait
-// reads like a casual, real-person selfie rather than a polished studio shot.
-// Shared by Gemini Nano Banana image generation so the look stays consistent
-// and can be tuned in one place.
-export function buildInfluencerImagePrompt(description) {
+// The "amateur phone-photo" look applied to influencer images so they read as
+// authentic real-person snapshots rather than polished studio shots. Shared by
+// Gemini Nano Banana image generation so the aesthetic can be tuned in one
+// place. `selfie` toggles the self-taken front-camera framing (used for
+// portraits and selfie-style posts) vs. a normal candid photo taken of the
+// person (used for scene posts where a selfie framing would look forced).
+function amateurPhotoStyle({ selfie = true } = {}) {
+  const framing = selfie
+    ? "A selfie that the person took themselves on a smartphone front-facing " +
+      "camera, held at arm's length. The arm holding the phone is visible " +
+      "reaching toward the camera, OR it is a mirror selfie with the phone " +
+      "clearly visible in hand. Close, slightly-too-near crop with mild " +
+      "front-camera wide-angle lens distortion (face a little enlarged, slightly " +
+      "warped proportions). It must obviously look like a self-taken phone photo, " +
+      "NOT a photo taken by someone else and NOT a professional or content-creator " +
+      "shot. "
+    : "A casual phone snapshot of the person in the scene, taken by a friend or " +
+      "on a propped-up phone — natural framing, not a selfie, not a posed " +
+      "professional or content-creator shot. ";
   return (
-    "A selfie that the person took themselves on a smartphone front-facing " +
-    "camera, held at arm's length. The arm holding the phone is visible " +
-    "reaching toward the camera, OR it is a mirror selfie with the phone " +
-    "clearly visible in hand. Close, slightly-too-near crop with mild " +
-    "front-camera wide-angle lens distortion (face a little enlarged, slightly " +
-    "warped proportions). It must obviously look like a self-taken phone photo, " +
-    "NOT a photo taken by someone else and NOT a professional or content-creator " +
-    "shot. Authentic, candid, slightly awkward everyday moment posted to " +
+    framing +
+    "Authentic, candid, slightly awkward everyday moment posted to " +
     "Instagram or Snapchat. Unflattering everyday lighting: harsh direct " +
     "on-camera phone flash OR flat overhead room light OR a bright blown-out " +
     "window behind them, with uneven exposure, mixed color temperatures, " +
@@ -48,8 +56,64 @@ export function buildInfluencerImagePrompt(description) {
     "studio or three-point lighting. Slight phone-camera softness, mild motion " +
     "blur or grain, realistic skin texture with pores, oil shine and minor " +
     "blemishes, relaxed natural or slightly imperfect expression. Amateur " +
-    `snapshot aesthetic, no retouching, no glamour. Description: ${description}`
+    "snapshot aesthetic, no retouching, no glamour."
   );
+}
+
+// Wraps a per-influencer description in the amateur phone-photo style frame.
+// When `hasReference` is true a profile photo is being supplied to the image
+// model as a subject reference, so the prompt instructs the model to KEEP that
+// exact person's identity and only change the scene — this is what keeps posts
+// looking like the same person as the profile photo. `selfie` controls framing.
+export function buildInfluencerImagePrompt(
+  description,
+  { hasReference = false, selfie = true } = {}
+) {
+  const style = amateurPhotoStyle({ selfie });
+  if (hasReference) {
+    return (
+      "Using the provided reference photo as the SUBJECT, generate a NEW photo " +
+      "of the SAME person. Preserve their identity exactly: same face shape, " +
+      "facial features, eye color, skin tone, hairstyle and hair color, body " +
+      "type, and any distinguishing marks. Do not change who the person is — " +
+      "only the setting, pose, outfit, expression, and lighting may change to " +
+      "match the new scene. " +
+      style +
+      ` Scene for this new photo: ${description}`
+    );
+  }
+  return `${style} Description: ${description}`;
+}
+
+// Loads a previously-generated /media image (by its public URL or absolute
+// path) back off disk as base64 so it can be passed to the Gemini image model
+// as a subject-reference. Returns { data, mimeType } or null if it can't be
+// read (callers treat a null reference as "no reference, text-only").
+export async function loadMediaAsBase64(urlOrPath) {
+  if (!urlOrPath) return null;
+  try {
+    let abs;
+    if (path.isAbsolute(urlOrPath)) {
+      abs = urlOrPath;
+    } else if (urlOrPath.startsWith("/media/")) {
+      const rel = urlOrPath.slice("/media/".length);
+      abs = path.resolve(config.mediaDir, rel);
+    } else {
+      // A bare relative path under the media dir.
+      abs = path.resolve(config.mediaDir, urlOrPath);
+    }
+    const buf = await readFile(abs);
+    const ext = path.extname(abs).toLowerCase();
+    const mimeType =
+      ext === ".jpg" || ext === ".jpeg"
+        ? "image/jpeg"
+        : ext === ".webp"
+          ? "image/webp"
+          : "image/png";
+    return { data: buf.toString("base64"), mimeType };
+  } catch {
+    return null;
+  }
 }
 
 // Returns an absolute path inside the media directory, creating subdirs.

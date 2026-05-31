@@ -151,6 +151,8 @@ export async function generateContent({ influencerId, contentId, topic }) {
         label: "broll",
         aspectRatio: "9:16",
         frameAsSelfie: false,
+        // Keep the reel's on-camera person matching the influencer's profile.
+        referenceImage: influencer.image_url || null,
       });
       imagePaths.push(img.path);
     } catch (err) {
