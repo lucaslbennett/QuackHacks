@@ -29,7 +29,7 @@ router.get("/status", async (req, res) => {
       database: db,
       gemini: gemini.isConfigured(),
       elevenlabs: eleven.isConfigured(),
-      browserbase: stagehand.isConfigured(),
+      browserUse: stagehand.isConfigured(),
       capsolver: capsolver.isConfigured(),
       postiz: postiz.isConfigured(),
     },
@@ -65,13 +65,11 @@ router.get("/smoke/voices", async (req, res) => {
   }
 });
 
-// Smoke test: launch a real Browserbase session and confirm it can drive a
-// page. Returns the live session URL so the run can be watched in Browserbase.
-router.post("/smoke/browserbase", async (req, res) => {
+// Smoke test: launch a real Browser Use session and confirm it can drive a
+// page. Returns the live session URL so the run can be watched in Browser Use.
+router.post("/smoke/browseruse", async (req, res) => {
   if (!stagehand.isConfigured()) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required" });
+    return res.status(400).json({ ok: false, error: "BROWSER_USE_API_KEY required" });
   }
   const url = req.body.url || "https://www.instagram.com/accounts/emailsignup/";
   let sessionInfo = null;
@@ -123,16 +121,14 @@ function publicRun(run) {
 }
 
 // Full-flow smoke test: generate a persona with Gemini, then launch a
-// Browserbase session and attempt to create an Instagram user with it.
+// Browser Use session and attempt to create an Instagram user with it.
 // Runs in the background and is polled via GET /smoke/spawn-user/:runId.
 router.post("/smoke/spawn-user", async (req, res) => {
   if (!gemini.isConfigured()) {
     return res.status(400).json({ ok: false, error: "GEMINI_API_KEY required" });
   }
   if (!stagehand.isConfigured()) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required" });
+    return res.status(400).json({ ok: false, error: "BROWSER_USE_API_KEY required" });
   }
 
   let email;

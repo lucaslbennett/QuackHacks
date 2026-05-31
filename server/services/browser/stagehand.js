@@ -1,172 +1,158 @@
 import { Stagehand } from "@browserbasehq/stagehand";
 import { config } from "../../config.js";
 import { createLogger } from "../../lib/logger.js";
+import * as browserUse from "./browserUse.js";
 
 const log = createLogger("stagehand");
 
 export function isConfigured() {
-  return Boolean(config.browserbase.apiKey && config.browserbase.projectId);
+  return browserUse.isConfigured();
 }
 
-// Browserbase solves CAPTCHAs asynchronously in the background and signals
-// progress via page console events. Stagehand 3.4.0 has no built-in awareness
-// of this, so we implement the documented pattern ourselves: track solver
-// state from the console events and expose a barrier that callers await before
-// proceeding (so we don't click/extract on a half-solved challenge or tear the
-// session down mid-solve).
-// See: https://docs.browserbase.com/platform/identity/overview (CAPTCHA events)
-const SOLVING_STARTED = "browserbase-solving-started";
-const SOLVING_FINISHED = "browserbase-solving-finished";
-// Hard cap so a missed "finished" event can never hang the flow forever.
-const SOLVE_TIMEOUT_MS = 45000;
-
-function attachCaptchaWatcher(page) {
-  const state = { solving: false, sawCaptcha: false, waiters: [] };
-
-  const settle = () => {
-    const waiters = state.waiters;
-    state.waiters = [];
-    for (const resolve of waiters) resolve();
-  };
-
-  const onConsole = (msg) => {
-    let text = "";
-    try {
-      text = msg.text();
-    } catch {
-      return;
-    }
-    if (text === SOLVING_STARTED) {
-      state.solving = true;
-      state.sawCaptcha = true;
-      log.info("CAPTCHA detected — Browserbase solving in progress");
-    } else if (text === SOLVING_FINISHED) {
-      if (state.solving) log.info("CAPTCHA solving finished");
-      state.solving = false;
-      settle();
-    }
-  };
-
-  try {
-    page.on("console", onConsole);
-  } catch (err) {
-    log.warn("could not attach captcha console listener", err?.message);
+// Fallback connect URL (used only when BROWSER_USE_REST_SESSIONS=false). Opens a
+// raw CDP WebSocket straight to Browser Use; the browser auto-starts on connect
+// and auto-stops on disconnect. NOTE: sessions opened this way authenticate but
+// do NOT appear in the dashboard's session list and do NOT update the API key's
+// "last used" — prefer the REST path (the default).
+// See: https://docs.browser-use.com/cloud/browser/playwright-puppeteer-selenium
+function buildConnectUrl() {
+  const url = new URL(config.browserUse.connectHost);
+  url.searchParams.set("apiKey", config.browserUse.apiKey);
+  if (config.browserUse.proxyCountryCode) {
+    url.searchParams.set("proxyCountryCode", config.browserUse.proxyCountryCode);
   }
+  if (config.browserUse.profileId) {
+    url.searchParams.set("profileId", config.browserUse.profileId);
+  }
+  if (config.browserUse.timeoutMinutes) {
+    url.searchParams.set("timeout", String(config.browserUse.timeoutMinutes));
+  }
+  // Match the REST path: randomize (or pin) the viewport so the connect-URL
+  // fallback doesn't expose a constant automation screen size either.
+  const viewport = browserUse.pickViewport();
+  url.searchParams.set("browserScreenWidth", String(viewport.width));
+  url.searchParams.set("browserScreenHeight", String(viewport.height));
+  return url.toString();
+}
 
-  // Waits out an in-progress solve. Returns true if a captcha was being solved
-  // (so callers can re-read the page), false if there was nothing to wait for.
-  // `startGraceMs` polls for Browserbase's "started" event, since captcha
-  // *detection* lags the page render — a single short check can miss it and let
-  // us proceed straight into the solve. If a solve already finished while we
-  // were sleeping before this call, `state.solving` is false and we correctly
-  // report "nothing to wait for".
-  const waitForCaptcha = async ({ timeoutMs = SOLVE_TIMEOUT_MS, startGraceMs = 4000 } = {}) => {
-    const graceDeadline = Date.now() + startGraceMs;
-    while (!state.solving && Date.now() < graceDeadline) {
-      await new Promise((r) => setTimeout(r, 300));
+// Opens a Browser Use cloud browser and returns everything needed to drive and
+// clean it up: a ws CDP URL for Stagehand, the live-view URL, a session id, and a
+// stop() handle.
+//
+// Primary path (default): create the session via the REST API so it's visible in
+// the dashboard and the key registers as used. Falls back to the raw connect URL
+// if REST creation is disabled or fails, so a transient API hiccup never fully
+// breaks a run.
+async function openBrowserUseSession() {
+  if (config.browserUse.useRestSessions) {
+    let session = null;
+    try {
+      session = await browserUse.createSession();
+      const cdpUrl = await browserUse.cdpWebSocketUrl(session);
+      return {
+        cdpUrl,
+        sessionId: session.id,
+        sessionUrl: session.liveUrl || browserUse.dashboardUrlFor(session.id),
+        stop: () => browserUse.stopSession(session.id),
+      };
+    } catch (err) {
+      // If the session was created but we couldn't derive a CDP URL, stop it so
+      // it doesn't keep running (and billing) until its timeout.
+      if (session?.id) await browserUse.stopSession(session.id);
+      log.warn(
+        "Browser Use REST session create failed — falling back to connect-URL (session won't show in dashboard)",
+        err?.message
+      );
     }
-    if (!state.solving) return false;
-
-    log.info("Waiting for Browserbase to finish solving CAPTCHA…");
-    await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        state.solving = false;
-        log.warn("CAPTCHA solve wait timed out; continuing");
-        resolve();
-      }, timeoutMs);
-      state.waiters.push(() => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    return true;
+  }
+  return {
+    cdpUrl: buildConnectUrl(),
+    sessionId: null,
+    sessionUrl: "https://cloud.browser-use.com",
+    stop: async () => {},
   };
-
-  return { waitForCaptcha, state };
 }
 
-// Builds the Browserbase dashboard URL for a session so it can be watched live.
-export function sessionUrlFor(sessionId) {
-  if (!sessionId) return null;
-  return `https://www.browserbase.com/sessions/${sessionId}`;
+// Browser Use's cloud browser solves CAPTCHAs IN the browser (stealth + built-in
+// bypass), so unlike Browserbase there are no "solving-started/finished" console
+// events to await. We keep the same `waitForCaptcha` barrier shape the flows
+// expect, but it's a no-op that immediately reports "nothing to wait for" —
+// callers then fall through to their own checks (DOM polling + the CapSolver
+// fallback in createAccount.js), which remain fully functional.
+function attachCaptchaWatcher() {
+  const waitForCaptcha = async () => false;
+  return { waitForCaptcha, state: { solving: false, sawCaptcha: false } };
 }
 
-// Creates an initialized Stagehand instance backed by Browserbase, using
-// Gemini as the reasoning model for act()/extract(). Caller must close().
+// A generic watchable link for when no per-session URL is available yet.
+export function sessionUrlFor() {
+  return "https://cloud.browser-use.com";
+}
+
+// Creates an initialized Stagehand instance backed by a Browser Use cloud
+// browser. Stagehand runs in LOCAL mode but, instead of launching Chrome on this
+// machine, attaches to Browser Use's remote stealth Chromium over CDP. Gemini is
+// the reasoning model for act()/extract().
+//
+// The returned instance carries a `browserUseSession` handle ({ sessionId,
+// sessionUrl, stop }); callers (withStagehand) must stop() the session after
+// closing Stagehand so we don't keep paying for an idle cloud browser.
+//
 // `onSession` (if provided) is invoked once the session is live with
 // { sessionId, sessionUrl } so callers can surface a watchable link early.
+// `sessionData` is accepted for call-site compatibility but ignored — login
+// persistence is handled by Browser Use profiles (BROWSER_USE_PROFILE_ID), not a
+// per-call context id.
 export async function createStagehand({ sessionData, onSession } = {}) {
+  void sessionData;
   if (!isConfigured()) {
-    throw new Error("BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID required");
+    throw new Error("BROWSER_USE_API_KEY required");
   }
+  const session = await openBrowserUseSession();
   const stagehand = new Stagehand({
-    env: config.browserbase.env,
-    apiKey: config.browserbase.apiKey,
-    projectId: config.browserbase.projectId,
+    env: config.browserUse.env,
     model: {
       modelName: `google/${config.gemini.model}`,
       apiKey: config.gemini.apiKey,
     },
+    // Attach to the Browser Use remote browser over CDP rather than launching a
+    // local Chrome. Stagehand v3 is CDP-native, so its page/act/extract API works
+    // identically against this backend.
+    localBrowserLaunchOptions: {
+      cdpUrl: session.cdpUrl,
+    },
+    // Run act()/extract() entirely through our own Gemini client and never route
+    // through Browserbase's hosted Stagehand API — we use Browser Use for the
+    // browser and Gemini for reasoning, nothing from Browserbase's backend.
+    disableAPI: true,
     // Don't over-wait for the DOM to "settle" between steps; IG pages keep
     // background activity alive, so a tight cap avoids multi-second stalls.
     domSettleTimeout: 3000,
     // Bound any LLM-backed act() so a slow inference can't hang the flow.
     actTimeoutMs: 20000,
-    // Pause flow execution while Browserbase's background CAPTCHA solver is
-    // active, and resume once it finishes. This is the SDK-native counterpart to
-    // our console-event barrier and stops act()/extract() from racing a solve.
-    waitForCaptchaSolves: true,
-    // Reuse cached element resolutions server-side across identical act/observe.
-    serverCache: true,
     verbose: process.env.DEBUG ? 2 : 1,
-    browserbaseSessionCreateParams: {
-      projectId: config.browserbase.projectId,
-      // Proxy config, in priority order:
-      //  1. A custom EXTERNAL proxy (BROWSERBASE_PROXY_SERVER) — set this to the
-      //     SAME proxy as CAPSOLVER_PROXY so the session egresses from the IP the
-      //     CAPTCHA was solved on. reCAPTCHA Enterprise binds the token to the
-      //     solver IP/fingerprint, so matching them is what lets an injected
-      //     CapSolver token actually clear IG's challenge.
-      //  2. Browserbase's built-in residential proxies (PAID; proxies:true on a
-      //     free plan fails session creation with 402), as a fallback.
-      ...(config.browserbase.proxyServer
-        ? {
-            proxies: [
-              {
-                type: "external",
-                server: config.browserbase.proxyServer,
-                ...(config.browserbase.proxyUsername
-                  ? { username: config.browserbase.proxyUsername }
-                  : {}),
-                ...(config.browserbase.proxyPassword
-                  ? { password: config.browserbase.proxyPassword }
-                  : {}),
-              },
-            ],
-          }
-        : config.browserbase.proxies
-          ? { proxies: true }
-          : {}),
-      browserSettings: {
-        // Reuse a stored Browserbase context for persistent IG sessions.
-        context: sessionData?.contextId
-          ? { id: sessionData.contextId, persist: true }
-          : undefined,
-        // Background CAPTCHA solving (incl. reCAPTCHA Enterprise). Available on
-        // all plans; success is best-effort and improves with proxies/stealth.
-        solveCaptchas: true,
-        // Advanced stealth (real device fingerprint) — ENTERPRISE only, so only
-        // include when enabled; sending it elsewhere fails session creation (403).
-        ...(config.browserbase.verified ? { verified: true } : {}),
-      },
-    },
   });
-  await stagehand.init();
-  const sessionId = stagehand.browserbaseSessionID;
-  log.info("Stagehand session initialized", sessionId || "");
+  try {
+    await stagehand.init();
+  } catch (err) {
+    // init failed after the cloud session was provisioned — stop it so we don't
+    // pay for an idle browser, then surface the original error.
+    try {
+      await session.stop?.();
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
+  // Stash the session handle so withStagehand can stop it during cleanup.
+  stagehand.browserUseSession = session;
+  log.info("Stagehand session initialized (Browser Use)", {
+    sessionId: session.sessionId || "(connect-url)",
+    sessionUrl: session.sessionUrl,
+  });
   if (typeof onSession === "function") {
     try {
-      onSession({ sessionId, sessionUrl: sessionUrlFor(sessionId) });
+      onSession({ sessionId: session.sessionId, sessionUrl: session.sessionUrl });
     } catch (err) {
       log.warn("onSession callback error", err?.message);
     }
@@ -174,7 +160,8 @@ export async function createStagehand({ sessionData, onSession } = {}) {
   return stagehand;
 }
 
-// Convenience: run a function with a Stagehand instance and always close it.
+// Convenience: run a function with a Stagehand instance and always close +
+// stop the underlying Browser Use session.
 export async function withStagehand(fn, opts) {
   const opts2 = opts || {};
   // Capture the live session info so we can hand the watchable URL to the flow
@@ -209,6 +196,14 @@ export async function withStagehand(fn, opts) {
       sessionUrl: session.sessionUrl,
     });
   } finally {
+    // Close the Stagehand/CDP connection first, then explicitly stop the cloud
+    // session via REST (Browser Use refunds the unused prepaid time). On the
+    // connect-URL fallback, stop() is a no-op since disconnect already stops it.
     await stagehand.close().catch((e) => log.warn("close error", e.message));
+    try {
+      await stagehand.browserUseSession?.stop?.();
+    } catch (e) {
+      log.warn("session stop error", e?.message);
+    }
   }
 }

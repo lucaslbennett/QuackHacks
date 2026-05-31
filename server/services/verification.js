@@ -42,13 +42,29 @@ function extractCode(text) {
 
 // --- Address generation ------------------------------------------------------
 
+// Per-process monotonic counter so two slugs minted in the same millisecond
+// (e.g. a tight account-generation loop) still differ.
+let slugSeq = 0;
+
+// Builds a GUARANTEED-UNIQUE address slug. A new account must get a brand-new
+// email every time: Instagram ties each address to a signup the instant it's
+// submitted, so reusing one (even from an abandoned attempt) trips "email
+// already in use" / "this email can't be used". The suffix combines a
+// millisecond timestamp + a per-process sequence counter + randomness, so no
+// two calls — even with an identical seed or within the same millisecond — ever
+// collide. The human-readable prefix is capped short so the unique suffix is
+// never lost to the 24-char truncation the IMAP/mail.tm helpers apply to the
+// local part (which strips the dot, leaving prefix+suffix).
 function randomSlug(seed) {
   const clean = String(seed || "creator")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "")
-    .slice(0, 16) || "creator";
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `${clean}.${rand}`;
+    .slice(0, 8) || "creator";
+  const unique =
+    Date.now().toString(36) +
+    (slugSeq++).toString(36) +
+    Math.random().toString(36).slice(2, 5);
+  return `${clean}.${unique}`;
 }
 
 // Returns a fresh, inbox-backed email address for a new account. ASYNC because

@@ -75,7 +75,7 @@ router.post(
 // hashtags) for an existing persona. Designed to be called repeatedly from an
 // influencer's detail page; each call produces a fresh, natural-feeling post.
 // The response includes a ready-to-paste block so it can be dropped straight
-// into Instagram until Browserbase auto-posting is wired up.
+// into Instagram until Browser Use auto-posting is wired up.
 router.post(
   "/post",
   optionalAuth,

@@ -1,12 +1,12 @@
 // Client for the developer test-harness endpoints (server/routes/system.js).
 // These power the Test Lab panel: agent (persona) generation, a raw
-// Browserbase session check, and the full "launch session + generate user" run.
+// Browser Use session check, and the full "launch session + generate user" run.
 
 export interface IntegrationStatus {
   database: boolean;
   gemini: boolean;
   elevenlabs: boolean;
-  browserbase: boolean;
+  browserUse: boolean;
   capsolver: boolean;
 }
 
@@ -26,7 +26,7 @@ export interface Persona {
   [key: string]: unknown;
 }
 
-export interface BrowserbaseResult {
+export interface BrowserUseResult {
   ok: boolean;
   title?: string;
   currentUrl?: string;
@@ -91,8 +91,8 @@ export const testApi = {
       }),
     }),
 
-  testBrowserbase: () =>
-    req<BrowserbaseResult>("/smoke/browserbase", {
+  testBrowserUse: () =>
+    req<BrowserUseResult>("/smoke/browseruse", {
       method: "POST",
       body: JSON.stringify({}),
     }),

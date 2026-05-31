@@ -1,6 +1,6 @@
-// Standalone Browserbase test harness for the Instagram account-generation flow.
+// Standalone Browser Use test harness for the Instagram account-generation flow.
 //
-// Runs the REAL createInstagramAccount() against a live Browserbase session so
+// Runs the REAL createInstagramAccount() against a live Browser Use session so
 // we can confirm the full sequence (fields → birthday/age → CAPTCHA → email
 // code → logged in) actually completes. Each step writes a screenshot to a
 // per-run debug dir so a run that "abruptly stops" can be inspected frame by
@@ -19,7 +19,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { config, missingKeys } from "../config.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
-import { isConfigured as browserbaseConfigured } from "../services/browser/stagehand.js";
+import { isConfigured as browserUseConfigured } from "../services/browser/stagehand.js";
 import { generateEmail } from "../services/verification.js";
 import * as gemini from "../services/gemini.js";
 import { createLogger } from "../lib/logger.js";
@@ -100,6 +100,7 @@ async function runOnce({ index, persona, debugRoot }) {
     result.ok = true;
     result.loggedIn = Boolean(account.loggedIn);
     result.blockedByCaptcha = Boolean(account.blockedByCaptcha);
+    result.blockedBySuspension = Boolean(account.blockedBySuspension);
     result.account = {
       username: account.username,
       password: account.password,
@@ -108,10 +109,12 @@ async function runOnce({ index, persona, debugRoot }) {
       note: account.note,
       loggedIn: account.loggedIn,
       blockedByCaptcha: account.blockedByCaptcha,
+      blockedBySuspension: account.blockedBySuspension,
     };
     log.info(`RUN ${index} result:`, {
       loggedIn: account.loggedIn,
       blockedByCaptcha: account.blockedByCaptcha,
+      blockedBySuspension: account.blockedBySuspension,
       username: account.username,
       note: account.note,
     });
@@ -135,11 +138,26 @@ async function runOnce({ index, persona, debugRoot }) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  if (!browserbaseConfigured()) {
-    log.error("Browserbase not configured. Set BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID.");
+  if (!browserUseConfigured()) {
+    log.error("Browser Use not configured. Set BROWSER_USE_API_KEY.");
     log.error("Missing keys:", missingKeys().join(", ") || "(none reported)");
     process.exit(2);
   }
+
+  // Preflight: the signup flow leans on Gemini for CAPTCHA OCR and Stagehand
+  // act()/extract() fallbacks, so a dead key dooms the run at the email/CAPTCHA
+  // step after burning a browser session and a long email wait. Catch it now.
+  const gem = await gemini.verifyAccess();
+  if (!gem.ok) {
+    log.error(`Gemini API key rejected${gem.status ? ` (HTTP ${gem.status})` : ""}: ${gem.message}`);
+    log.error(
+      "Set a working GEMINI_API_KEY in .env (generate one at https://aistudio.google.com/apikey). " +
+        'Note: "AQ."-prefixed service-account keys must have the Generative Language API enabled + billing on their bound project; ' +
+        "the most reliable fix is to regenerate a legacy \"AIza…\"-format key."
+    );
+    process.exit(2);
+  }
+
   const provider = config.verification.emailProvider;
   if (!["maildotm", "mailosaur"].includes(provider)) {
     log.warn(`EMAIL_PROVIDER is "${provider}" — automated email-code retrieval needs "maildotm" (recommended) or "mailosaur".`);
@@ -173,11 +191,13 @@ async function main() {
   for (const r of results) {
     const outcome = r.loggedIn
       ? "LOGGED IN ✅"
-      : r.blockedByCaptcha
-        ? "blocked by CAPTCHA 🤖 (needs proxies/human solve)"
-        : r.ok
-          ? "completed, not logged in ⚠️"
-          : "errored ❌";
+      : r.blockedBySuspension
+        ? "created but SUSPENDED/challenged 🚫 (needs phone verify / better proxy / warming)"
+        : r.blockedByCaptcha
+          ? "blocked by CAPTCHA 🤖 (needs proxies/human solve)"
+          : r.ok
+            ? "completed, not logged in ⚠️"
+            : "errored ❌";
     log.info(
       `  run ${r.index}: ${outcome}` +
         ` · ${(r.durationMs / 1000).toFixed(1)}s · ${r.sessionUrl || "no session"}` +

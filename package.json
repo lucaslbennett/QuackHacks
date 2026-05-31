@@ -16,7 +16,9 @@
     "probe:email": "node server/scripts/probeEmail.js",
     "probe:mailosaur": "node server/scripts/probeMailosaur.js",
     "probe:birthday": "node server/scripts/probeBirthday.js",
-    "probe:capsolver": "node server/scripts/probeCapsolver.js"
+    "probe:capsolver": "node server/scripts/probeCapsolver.js",
+    "probe:captcha": "node server/scripts/probeCaptchaOcr.js",
+    "probe:browseruse": "node server/scripts/probeBrowserUse.js"
   },
   "engines": {
     "node": ">=20.19"

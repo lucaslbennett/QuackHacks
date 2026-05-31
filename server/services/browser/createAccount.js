@@ -4,6 +4,7 @@ import { z } from "zod";
 import { config } from "../../config.js";
 import { withStagehand } from "./stagehand.js";
 import * as capsolver from "./capsolver.js";
+import * as gemini from "../gemini.js";
 import { waitForEmailCode, generateEmail } from "../verification.js";
 import { sleep, randomInt } from "../../lib/util.js";
 import { createLogger } from "../../lib/logger.js";
@@ -18,6 +19,13 @@ const KNOWN_ENTERPRISE_SITEKEYS = new Set([
 ]);
 
 const log = createLogger("signup");
+
+// Instagram entry points. We deliberately do NOT cold-deep-link the signup
+// endpoint: arriving at /accounts/emailsignup/ with no prior pageview, no
+// cookies, and no referrer is a textbook automation funnel. Instead we land on
+// the homepage first (sets cookies + referrer), then click through to signup.
+const IG_HOME_URL = "https://www.instagram.com/";
+const IG_SIGNUP_URL = "https://www.instagram.com/accounts/emailsignup/";
 
 // Builds a step tracer for the signup flow. Always logs the step label + the
 // page URL (so we can see *where* a run died); additionally writes a screenshot
@@ -101,20 +109,353 @@ async function firstVisible(page, selectors) {
   return sel ? page.locator(sel).first() : null;
 }
 
-// Types into a field via direct locator; falls back to act() if not found.
-async function fastFill(stagehand, page, { selectors, value, describe, log }) {
-  const sel = await firstVisibleSelector(page, selectors);
-  if (sel) {
-    try {
-      await page.locator(sel).first().fill(value);
-      return true;
-    } catch (e) {
-      log?.warn(`fastFill direct failed for ${describe}`, e?.message);
+// Reads back an input/textarea value by selector, so we can VERIFY a fill
+// actually stuck (the whole reason for the empty-email stall: a fill that
+// silently no-ops leaves IG on a frozen signup form forever).
+async function readInputValue(page, selector) {
+  if (!selector) return null;
+  return page
+    .evaluate((sel) => {
+      const el = document.querySelector(sel);
+      return el && typeof el.value === "string" ? el.value : null;
+    }, selector)
+    .catch(() => null);
+}
+
+// Instagram's signup inputs lost their stable identifiers — email and full-name
+// are now bare <input type="text"> with no name/aria-label/placeholder and only
+// a React-generated id (e.g. "_r_8_"). The ONLY durable signal is their wrapping
+// <label> text. Find the first visible input whose associated/wrapping label
+// text includes any keyword, tag it with data-qh-field=<key>, and return that
+// selector so we can drive it deterministically.
+//
+// Keywords must be SPECIFIC: use "full name" (not "name"), because "Username"
+// also contains "name" and would be matched by the looser term.
+async function tagInputByLabel(page, { keywords, key }) {
+  return page
+    .evaluate((arg) => {
+      const { keywords, key } = arg;
+      const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const wanted = keywords.map((k) => k.toLowerCase());
+      const isVisible = (el) => {
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const fields = Array.from(document.querySelectorAll("input, textarea")).filter(isVisible);
+      for (const el of fields) {
+        const labelText = norm(
+          (el.labels && Array.from(el.labels).map((l) => l.textContent).join(" ")) ||
+            (el.closest("label") && el.closest("label").textContent) ||
+            ""
+        );
+        if (wanted.some((w) => labelText.includes(w))) {
+          el.setAttribute("data-qh-field", key);
+          return `[data-qh-field="${key}"]`;
+        }
+      }
+      return null;
+    }, { keywords, key })
+    .catch(() => null);
+}
+
+// Sets a (React-)controlled input's value via the prototype's native setter and
+// fires input/change, so frameworks that intercept the value setter pick up the
+// change. This is what reliably populates IG's controlled email/name inputs when
+// a plain locator.fill() blackholes. Returns the read-back value.
+async function setInputValueNative(page, selector, value) {
+  return page
+    .evaluate((arg) => {
+      const { sel, value } = arg;
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const ctor = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : HTMLInputElement;
+      const desc = Object.getOwnPropertyDescriptor(ctor.prototype, "value");
+      try {
+        el.focus();
+      } catch {
+        /* ignore */
+      }
+      if (desc && desc.set) desc.set.call(el, value);
+      else el.value = value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      try {
+        el.blur();
+      } catch {
+        /* ignore */
+      }
+      return el.value;
+    }, { sel: selector, value })
+    .catch(() => null);
+}
+
+// Small randomized "think time". IG's signup risk model penalizes inhuman,
+// perfectly-uniform cadence (fields filled and buttons clicked in machine time),
+// so we sprinkle short, jittered pauses between actions. Best-effort.
+async function thinkTime(minMs, maxMs) {
+  await sleep(randomInt(minMs, maxMs));
+}
+
+// A longer "reading" pause for the moments a human would actually stop to read:
+// a freshly-rendered screen, right before committing a form, between flow steps.
+// Bots act the instant the DOM is ready; this restores that human beat.
+async function readPause(minMs = 900, maxMs = 2200) {
+  await sleep(randomInt(minMs, maxMs));
+}
+
+// --- Human cursor movement (anti-bot behavioral signals) --------------------
+// Bot detectors increasingly score the MOUSE PATH: a real pointer arrives at a
+// target via a continuous, slightly-curved, variable-speed trajectory, while
+// automation tends to "teleport" the cursor straight onto an element (a single
+// mouseMoved to the exact center) or click with no prior movement at all. The
+// understudy engine exposes page.hover(x, y), which dispatches genuine CDP
+// Input mouseMoved events, so we can synthesize a believable human trajectory.
+
+// Per-PAGE cursor state (not module-global) so concurrent signups don't share a
+// phantom cursor position. A real cursor never jumps, so we always move FROM the
+// last known point.
+function mouseState(page) {
+  if (!page.__qhMouse) page.__qhMouse = { x: null, y: null };
+  return page.__qhMouse;
+}
+
+// Current viewport size (defaults are conservative if the read fails).
+async function viewportSize(page) {
+  return page
+    .evaluate(() => ({
+      w: window.innerWidth || 1280,
+      h: window.innerHeight || 800,
+    }))
+    .catch(() => ({ w: 1280, h: 800 }));
+}
+
+// Moves the cursor to (x, y) along a gently-curved, multi-step path with small
+// per-step jitter and ease-in-out timing — a genuine human trajectory rather
+// than one instant jump. Uses page.hover(x, y) (real CDP mouseMoved). All
+// best-effort: a no-op when the primitive is missing, never throws.
+async function moveMouseTo(page, x, y, { steps } = {}) {
+  if (typeof page.hover !== "function") return false;
+  try {
+    const { w, h } = await viewportSize(page);
+    const clamp = (v, max) => Math.max(1, Math.min(Math.round(v), max - 1));
+    const tx = clamp(x, w);
+    const ty = clamp(y, h);
+    const st = mouseState(page);
+    let sx = st.x;
+    let sy = st.y;
+    // First move of the session: start from a plausible spot, not (0,0).
+    if (sx == null || sy == null) {
+      sx = randomInt(Math.floor(w * 0.25), Math.floor(w * 0.75));
+      sy = randomInt(Math.floor(h * 0.25), Math.floor(h * 0.75));
     }
+    const dist = Math.hypot(tx - sx, ty - sy);
+    const n = steps || Math.max(5, Math.min(26, Math.round(dist / 20)));
+    // A control point offset off the straight line gives a natural arc.
+    const cx = (sx + tx) / 2 + randomInt(-50, 50);
+    const cy = (sy + ty) / 2 + randomInt(-40, 40);
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      // Ease-in-out so the cursor accelerates then settles (humans don't move at
+      // a constant velocity), traced along a quadratic Bézier for the curve.
+      const e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      const bx = (1 - e) * (1 - e) * sx + 2 * (1 - e) * e * cx + e * e * tx;
+      const by = (1 - e) * (1 - e) * sy + 2 * (1 - e) * e * cy + e * e * ty;
+      await page.hover(clamp(bx + randomInt(-2, 2), w), clamp(by + randomInt(-2, 2), h)).catch(() => {});
+      await sleep(randomInt(6, 20));
+    }
+    st.x = tx;
+    st.y = ty;
+    return true;
+  } catch {
+    return false;
   }
+}
+
+// Moves the cursor along a human arc to a selector's on-screen center (aiming a
+// few px off dead-center, like a real person), so the next click/hover lands
+// after genuine movement. Best-effort; returns whether it moved.
+async function moveMouseToSelector(page, selector) {
+  if (!selector) return false;
+  try {
+    const pt = await page.locator(selector).first().centroid();
+    if (!pt || !(pt.x > 0) || !(pt.y > 0)) return false;
+    return await moveMouseTo(page, pt.x + randomInt(-6, 6), pt.y + randomInt(-4, 4));
+  } catch {
+    return false;
+  }
+}
+
+// Small idle cursor drift for "reading" pauses — a real person's hand nudges the
+// mouse while they read; a bot leaves it frozen. Fires only sometimes so it
+// doesn't look metronomic. Best-effort.
+async function idleMouseDrift(page) {
+  if (Math.random() < 0.45) return;
+  try {
+    const { w, h } = await viewportSize(page);
+    const st = mouseState(page);
+    const base = st.x != null ? st : { x: Math.floor(w / 2), y: Math.floor(h / 2) };
+    await moveMouseTo(page, base.x + randomInt(-130, 130), base.y + randomInt(-90, 90), {
+      steps: randomInt(4, 9),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+// A plausible mis-key: a random lowercase letter that ISN'T the character we're
+// about to type (so the "typo → backspace → correct" looks like a real slip).
+function randomTypoChar(nextChar) {
+  const alpha = "abcdefghijklmnopqrstuvwxyz";
+  const skip = String(nextChar || "").toLowerCase();
+  let c;
+  do {
+    c = alpha[Math.floor(Math.random() * alpha.length)];
+  } while (c === skip);
+  return c;
+}
+
+// Types `value` with non-robotic cadence using only real CDP keystrokes
+// (pressSequentially → type). Two human signals layered on top of per-key delay:
+//   1. An occasional pre-value mis-key (stray char + brief pause + Backspace) —
+//      a strong "a person is typing" tell.
+//   2. Occasionally typing the value as two bursts with a pause between, instead
+//      of one perfectly-even stream.
+// Correctness is GUARANTEED by the caller (humanType verifies the final value
+// and cleanly retypes on any mismatch), so neither flourish can corrupt a field.
+async function typeHumanly(page, loc, value) {
+  const v = String(value);
+  const seq =
+    typeof loc.pressSequentially === "function"
+      ? (s, d) => loc.pressSequentially(s, { delay: d })
+      : typeof loc.type === "function"
+        ? (s, d) => loc.type(s, { delay: d })
+        : null;
+  if (!seq) {
+    await loc.fill(v).catch(() => {});
+    return;
+  }
+
+  // (1) Occasional pre-value mis-key, then correct it. Backspace goes through
+  // the CDP Input domain too. If it ever misses, the caller's verify+retype net
+  // restores the exact value, so this is always safe to attempt.
+  if (v.length >= 4 && Math.random() < 0.18) {
+    await seq(randomTypoChar(v[0]), randomInt(60, 140)).catch(() => {});
+    await thinkTime(90, 260);
+    await page.keyPress("Backspace").catch(() => {});
+    await thinkTime(80, 200);
+  }
+
+  // (2) Type in one stream, or split into two human bursts.
+  if (v.length >= 8 && Math.random() < 0.5) {
+    const cut = randomInt(3, v.length - 3);
+    await seq(v.slice(0, cut), randomInt(55, 140)).catch(() => {});
+    await thinkTime(140, 420);
+    await seq(v.slice(cut), randomInt(55, 140)).catch(() => {});
+  } else {
+    await seq(v, randomInt(55, 140)).catch(() => {});
+  }
+}
+
+// Types into a field with a human-ish cadence: a real cursor drift + focus
+// click, a brief pause, then character-by-character typing (via whatever per-key
+// primitive the understudy engine exposes). This sheds the "instant value set"
+// signal a plain fill()/native-setter leaves.
+//
+// SELF-VERIFYING: it reads the value back and, on any mismatch (e.g. a burst
+// scrambled the caret or a mis-key wasn't backspaced), cleanly retypes the exact
+// value via real keystrokes one more time. So it returns true with a correctly,
+// HUMANLY-typed field in the overwhelming majority of cases — which keeps the
+// flow off the less-human fill()/native-setter fallbacks in fastFill. Returns
+// false only if it genuinely couldn't type; fastFill then falls back as before.
+async function humanType(page, selector, value, { log } = {}) {
+  if (!selector) return false;
+  const v = String(value);
+  const matches = async () => {
+    const got = await readInputValue(page, selector);
+    return got != null && got.trim() === v.trim();
+  };
+  try {
+    const loc = page.locator(selector).first();
+    // Real mouse move toward the field along a human arc, then a real click to
+    // focus it — all through the CDP Input domain (genuine pointer events), not
+    // a synthetic JS focus or a straight teleport to the field's center.
+    await moveMouseToSelector(page, selector);
+    await loc.hover().catch(() => {});
+    await thinkTime(60, 160);
+    await loc.click().catch(() => {});
+    await thinkTime(110, 300);
+    await loc.fill("").catch(() => {}); // type into a clean field
+
+    await typeHumanly(page, loc, v);
+    if (await matches()) return true;
+
+    // Mismatch — one clean, still-human retype (real keystrokes) before ceding
+    // to fastFill's fill()/native-setter fallbacks.
+    await loc.fill("").catch(() => {});
+    if (typeof loc.pressSequentially === "function") {
+      await loc.pressSequentially(v, { delay: randomInt(55, 120) }).catch(() => {});
+    } else if (typeof loc.type === "function") {
+      await loc.type(v, { delay: randomInt(55, 120) }).catch(() => {});
+    }
+    return matches();
+  } catch (e) {
+    log?.warn("humanType failed", e?.message);
+  }
+  return false;
+}
+
+// Fills a field and VERIFIES the value took, trying progressively more forceful
+// strategies. IG's signup form silently refuses to advance when a required field
+// (notably email) is empty, and its inputs no longer expose name/aria-label, so
+// a single best-effort fill is not enough:
+//   1. Human-cadence typing (focus + per-key delay) when supported.
+//   2. Locator fill on a known CSS selector or label-resolved node.
+//   3. Native-setter fill on the resolved node (handles controlled inputs).
+//   4. LLM act() as a last resort.
+// After each strategy we read the value back; we only return true once the field
+// actually contains the value. `key` is the data-qh-field tag used for (2)/(3).
+async function fastFill(stagehand, page, { selectors = [], labelKeywords = [], value, describe, key, log }) {
+  const matches = async (sel) => {
+    const got = await readInputValue(page, sel);
+    return got != null && got.trim() === String(value).trim();
+  };
+
+  // Resolve a selector for this field: a matching known CSS selector, else the
+  // label-tagged one (also (re)applies the data-qh-field tag).
+  const resolve = async () => {
+    const css = await firstVisibleSelector(page, selectors);
+    if (css) return css;
+    if (labelKeywords.length) return tagInputByLabel(page, { keywords: labelKeywords, key: key || "field" });
+    return null;
+  };
+
+  const sel = await resolve();
+  if (sel) {
+    // (a) Human-cadence typing — focus + per-key delay (anti-bot), then verify.
+    await humanType(page, sel, value, { log });
+    if (await matches(sel)) return true;
+    // (b) Locator fill (clears + types, fires proper events) — the proven path.
+    await page
+      .locator(sel)
+      .first()
+      .fill(value)
+      .catch((e) => log?.warn(`fastFill locator fill failed for ${describe}`, e?.message));
+    if (await matches(sel)) return true;
+    // (c) Native setter on the same node (controlled-input safe).
+    await setInputValueNative(page, sel, value);
+    if (await matches(sel)) return true;
+  }
+
+  // (d) LLM fallback, then verify against whatever selector we can resolve.
   await stagehand.act(`type "${value}" into the ${describe}`).catch((e) => {
     log?.warn(`fastFill act fallback failed for ${describe}`, e?.message);
   });
+  const verifySel = await resolve();
+  if (await matches(verifySel)) return true;
+
+  log?.warn(`fastFill could NOT confirm a value for ${describe} (field stayed empty/mismatched)`);
   return false;
 }
 
@@ -146,6 +487,11 @@ async function clickButtonByText(page, texts) {
     }, texts)
     .catch(() => null);
   if (!pt || pt.x <= 0 || pt.y <= 0) return false;
+  // Approach the target along a human cursor arc and pause briefly before the
+  // real click, so the click is preceded by genuine pointer movement instead of
+  // a teleport-then-click (a strong automation tell).
+  await moveMouseTo(page, pt.x, pt.y);
+  await thinkTime(40, 140);
   await page.click(pt.x, pt.y).catch(() => {});
   return true;
 }
@@ -170,6 +516,167 @@ async function pressButton(stagehand, page, { texts = [], cssFallback = [], act,
     return true;
   }
   return false;
+}
+
+// --- Human-presence helpers (anti-bot behavioral signals) -------------------
+// Instagram's signup risk engine doesn't only look at WHAT we submit; it watches
+// HOW we got there. A session that teleports to a form and types with zero
+// scrolling, no cursor movement, and no reading time reads as automation even
+// with a perfect fingerprint. These best-effort helpers add the missing human
+// engagement; each is a safe no-op when its target isn't present.
+
+// Dismisses a cookie/consent dialog by its specific button labels. Centralized
+// so we can clear it on both the homepage and the signup form.
+async function dismissCookieBanner(page) {
+  await clickButtonByText(page, [
+    "Allow all cookies",
+    "Accept all",
+    "Accept All",
+    "Allow all",
+    "Allow essential and optional cookies",
+    "Only allow essential cookies",
+    "Decline optional cookies",
+  ]).catch(() => {});
+}
+
+// Hovers the first visible of `selectors` with a real CDP mouse move — a genuine
+// pointer event (not synthetic JS), which is what populates the "mouse moved
+// before interacting" signal. No-op if none are visible.
+async function hoverSafely(page, selectors) {
+  const sel = await firstVisibleSelector(page, selectors);
+  if (!sel) return false;
+  try {
+    await moveMouseToSelector(page, sel);
+    await page.locator(sel).first().hover();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A light, human-looking scroll: a couple of downward nudges (and sometimes a
+// small scroll back up), with pauses. Real users never sit a page at scrollY=0
+// and immediately type; this registers page engagement.
+//
+// IMPORTANT: prefer REAL wheel events via page.scroll(x, y, dx, dy) (CDP Input
+// domain → isTrusted, with proper wheel deltas) over page.evaluate(scrollBy),
+// which is a synthetic, UNtrusted programmatic scroll that bot detectors can
+// tell apart from a genuine user gesture. Each nudge is split into a few ticks
+// so the scroll ramps like a real wheel spin rather than one instant jump.
+// Falls back to scrollBy only if the wheel primitive is unavailable.
+async function gentleScroll(page, log) {
+  try {
+    const { w, h } = await viewportSize(page);
+    const ox = randomInt(Math.floor(w * 0.3), Math.floor(w * 0.7));
+    const oy = randomInt(Math.floor(h * 0.3), Math.floor(h * 0.7));
+    const canWheel = typeof page.scroll === "function";
+    const wheel = async (dy) => {
+      if (canWheel) {
+        const ticks = randomInt(2, 4);
+        for (let t = 0; t < ticks; t++) {
+          await page.scroll(ox, oy, 0, Math.round(dy / ticks)).catch(() => {});
+          await sleep(randomInt(40, 110));
+        }
+      } else {
+        await page
+          .evaluate((y) => window.scrollBy({ top: y, left: 0, behavior: "smooth" }), dy)
+          .catch(() => {});
+      }
+    };
+
+    const nudges = randomInt(1, 3);
+    for (let i = 0; i < nudges; i++) {
+      await wheel(randomInt(120, 420));
+      await thinkTime(350, 900);
+    }
+    if (Math.random() < 0.5) {
+      await wheel(-randomInt(80, 220));
+      await thinkTime(250, 650);
+    }
+  } catch (e) {
+    log?.warn("gentleScroll failed", e?.message);
+  }
+}
+
+// Clicks the "Sign up" / "Create new account" link to funnel from the homepage
+// into the signup form as a real same-site navigation (carries a referrer and
+// the cookies IG just set). Hovers first for a natural cursor approach. Falls
+// back to a text-based coordinate click. Returns whether a click fired.
+async function clickSignupLink(page, log) {
+  const sel = await firstVisibleSelector(page, [
+    'a[href*="emailsignup"]',
+    'a[href*="/accounts/signup"]',
+    'a[href*="signup"]',
+  ]);
+  if (sel) {
+    try {
+      await moveMouseToSelector(page, sel);
+      await page.locator(sel).first().hover().catch(() => {});
+      await thinkTime(140, 380);
+      await page.locator(sel).first().click();
+      return true;
+    } catch (e) {
+      log?.warn("sign-up link click failed", e?.message);
+    }
+  }
+  return clickButtonByText(page, [
+    "Sign up",
+    "Sign Up",
+    "Create new account",
+    "Create New Account",
+  ]);
+}
+
+// Realistic entry funnel: land on the IG homepage (sets first-party cookies +
+// gives the eventual signup nav a same-site referrer), behave like a person for
+// a beat (read, drift the cursor, a small scroll), then click through to the
+// signup form. Guarantees we end on the email-signup form regardless of how the
+// click lands; on any failure it falls back to navigating there directly, so the
+// happy path is never worse than the old cold deep-link.
+async function warmUpEntry({ page, log, capture, settleCaptcha }) {
+  try {
+    await page.goto(IG_HOME_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+  } catch (e) {
+    log.warn("Homepage warm-up navigation failed — going straight to signup", e?.message);
+    await page.goto(IG_SIGNUP_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+    return;
+  }
+  await capture("homepage-loaded");
+  // The homepage itself can be gated by a challenge.
+  await settleCaptcha();
+  await dismissCookieBanner(page);
+  await readPause();
+  await idleMouseDrift(page);
+  await hoverSafely(page, ['svg[aria-label="Instagram"]', 'a[href="/"]', "h1", "img"]);
+  await gentleScroll(page, log);
+  await thinkTime(400, 1100);
+
+  const clicked = await clickSignupLink(page, log);
+  if (clicked) {
+    // Wait for the signup form to render after the SPA/page transition.
+    for (let i = 0; i < 16; i++) {
+      const onForm = await firstVisibleSelector(page, ['input[type="email"]', 'input[type="text"]']);
+      let url = "";
+      try {
+        url = page.url();
+      } catch {
+        /* page may be navigating */
+      }
+      if (onForm || /emailsignup|signup/i.test(url)) break;
+      await sleep(500);
+    }
+  }
+
+  // Whatever happened above, make sure we're actually on the email-signup form.
+  let url = "";
+  try {
+    url = page.url();
+  } catch {
+    /* page may be gone */
+  }
+  if (!/emailsignup/i.test(url)) {
+    await page.goto(IG_SIGNUP_URL, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+  }
 }
 
 // True if a blocking CAPTCHA challenge ("Help us confirm it's you" + reCAPTCHA
@@ -215,8 +722,9 @@ async function captchaPresent(page) {
 }
 
 // Clicks the reCAPTCHA "I'm not a robot" checkbox to INITIATE the challenge so
-// Browserbase's solver can take over (it solves the resulting challenge, but the
-// visible v2 checkbox must be clicked first). Prefers clicking the real
+// the solver (Browser Use's built-in bypass or CapSolver) can take over (it
+// solves the resulting challenge, but the visible v2 checkbox must be clicked
+// first). Prefers clicking the real
 // #recaptcha-anchor element inside the anchor iframe via frameLocator — the
 // understudy adopts the OOPIF session, so this reaches cross-origin frames —
 // and falls back to a coordinate click computed from the iframe's box.
@@ -284,9 +792,9 @@ async function clickRecaptchaCheckbox(page, log) {
 }
 
 // --- Programmatic CAPTCHA solving via CapSolver ------------------------------
-// Browserbase's background solver is plan-gated and weak on reCAPTCHA Enterprise
-// (what IG serves) without residential proxies. When CAPSOLVER_API_KEY is set we
-// solve the challenge ourselves: read the sitekey off the page, get a token from
+// Browser Use bypasses most CAPTCHAs in-browser, but IG's reCAPTCHA Enterprise
+// can still slip through. When CAPSOLVER_API_KEY is set we solve the challenge
+// ourselves as a fallback: read the sitekey off the page, get a token from
 // CapSolver, inject it into the g-recaptcha-response field, and fire the widget
 // callback so the challenge validates. All best-effort — never throws.
 
@@ -621,83 +1129,107 @@ async function waitForCaptchaCleared(page, { timeoutMs = 12000, intervalMs = 150
   }
 }
 
-// Ensures a CAPTCHA challenge is cleared before proceeding. Two paths:
+// Ensures a CAPTCHA challenge is cleared before proceeding.
 //
-//   FAST PATH (CapSolver configured) — the primary, ~15-45s route:
-//     detect sitekey -> CapSolver solve (Enterprise task) -> transfer token
-//     (response field + success callback + getResponse patch) -> click IG's
-//     "Next" -> poll for a quick clear. We deliberately do NOT click the v2
-//     checkbox here: clicking it opens the image-grid challenge, which fights
-//     token injection and is what made the old flow crawl for minutes. A few
-//     back-to-back tries clear it in well under a minute.
-//
-//   FALLBACK PATH (no CapSolver, or it couldn't clear it):
-//     click the v2 checkbox to engage Browserbase's background solver, then poll
-//     (surfacing the live session URL for an optional human solve) until the
-//     challenge clears or manualTimeoutMs elapses.
+// Strategy: Browser Use's stealth browser bypasses most CAPTCHAs automatically
+// in-browser, so we poll FIRST — frequently the challenge is already gone. When
+// IG's "confirm it's you" reCAPTCHA Enterprise persists, we fall back to
+// CapSolver: click the v2 checkbox to initiate the challenge, then (within a
+// budget) solve+inject+submit a token. A PROXYLESS CapSolver token is solved on
+// a datacenter IP and IG's Enterprise risk engine often rejects the
+// IP/fingerprint mismatch, so route the browser and CapSolver through the same
+// residential region (BROWSER_USE_PROXY_COUNTRY + CAPSOLVER_PROXY) for the best
+// clear rate. Therefore:
+//   - Poll first (Browser Use may have already cleared it).
+//   - Click the checkbox, then each round try a CapSolver solve+inject+submit.
+//   - CapSolver budget is 3 when PROXIED (CAPSOLVER_PROXY set → reliable, leads)
+//     and just 1 when proxyless (don't burn credits on a losing battle).
+//   - Finally, fall back to a manual/human wait on the live session.
 //
 // Returns true if a CAPTCHA was encountered, false if none was present. Never
 // throws.
 async function ensureCaptchaSolved({
   page,
-  waitForCaptcha,
   sessionUrl,
   log,
   manualTimeoutMs = Number(process.env.CAPTCHA_WAIT_MS) || 180000,
 }) {
-  // Give any in-flight Browserbase background solve a brief chance to finish
-  // (it often clears the first post-submit challenge for free), but cap the wait
-  // so CapSolver isn't blocked behind it for tens of seconds.
-  await (waitForCaptcha?.({ startGraceMs: 1500, timeoutMs: 8000 }) ?? Promise.resolve(false));
+  // Give Browser Use's in-browser CAPTCHA bypass a brief beat to act before we
+  // inspect the page (it often clears the first post-submit challenge for free).
+  await sleep(2000);
 
-  // No challenge present (none appeared or the solver already cleared it).
+  // No challenge present (none appeared or Browser Use already cleared it).
   if (!(await captchaPresent(page))) return false;
 
-  // ---- FAST PATH: CapSolver programmatic solve -------------------------------
-  if (capsolver.isConfigured()) {
-    const maxApiTries = 3;
-    for (let attempt = 1; attempt <= maxApiTries; attempt++) {
-      if (!(await captchaPresent(page))) {
-        log.info("CAPTCHA cleared");
-        return true;
-      }
-      log.warn(`CAPTCHA present — CapSolver solve attempt ${attempt}/${maxApiTries}`, { sessionUrl });
-      const transferred = await solveCaptchaViaApi({ page, log });
-      if (transferred) {
+  const apiReady = capsolver.isConfigured();
+  const apiProxied = apiReady && Boolean(config.capsolver.proxy);
+  // Proxyless CapSolver tokens are usually rejected by IG (solve IP != browser
+  // IP), so cap futile attempts at 1; a matched residential proxy makes CapSolver
+  // reliable, so let it lead with a larger budget.
+  const apiBudget = apiProxied ? 3 : apiReady ? 1 : 0;
+  let apiUsed = 0;
+
+  // Initiate the visible challenge by clicking the v2 checkbox so Browser Use's
+  // in-browser bypass (or CapSolver) can take it over.
+  await clickRecaptchaCheckbox(page, log);
+
+  const rounds = 3;
+  for (let attempt = 1; attempt <= rounds; attempt++) {
+    if (!(await captchaPresent(page))) {
+      log.info("CAPTCHA cleared");
+      return true;
+    }
+
+    // (a) Give Browser Use's in-browser bypass a moment, then click IG's "Next".
+    // Even when the reCAPTCHA checkbox is solved, IG's modal still needs Next to
+    // advance — without this click a solved challenge just sits there. Then poll
+    // for a clear (generous window when proxyless since the in-browser bypass is
+    // our best bet; short when proxied since CapSolver leads).
+    await sleep(1000);
+    await submitSolvedCaptcha(page, log);
+    if (await waitForCaptchaCleared(page, { timeoutMs: apiProxied ? 2000 : 12000 })) {
+      log.info("CAPTCHA cleared (Browser Use in-browser bypass)");
+      return true;
+    }
+
+    // (b) CapSolver solve+inject+submit, within budget.
+    if (apiReady && apiUsed < apiBudget) {
+      apiUsed += 1;
+      log.warn(`CAPTCHA still up — CapSolver attempt ${apiUsed}/${apiBudget}`, {
+        sessionUrl,
+        proxied: apiProxied,
+      });
+      if (await solveCaptchaViaApi({ page, log })) {
         await sleep(800); // let the token settle into the widget
         await submitSolvedCaptcha(page, log);
-        if (await waitForCaptchaCleared(page, { timeoutMs: 12000 })) {
+        if (await waitForCaptchaCleared(page, { timeoutMs: 8000 })) {
           log.info("CAPTCHA cleared (CapSolver)");
           return true;
         }
-        log.warn("CAPTCHA still up after submitting CapSolver token; retrying");
-      } else {
-        // Sitekey not on the page yet / solve failed — short wait then retry.
-        await sleep(2000);
+        log.warn("CAPTCHA still up after submitting CapSolver token");
       }
     }
-    log.warn("CapSolver did not clear the CAPTCHA after retries; falling back to checkbox + manual", {
-      sessionUrl,
-    });
+
+    // Re-nudge the checkbox to (re)initiate the challenge for the next round.
+    await clickRecaptchaCheckbox(page, log);
   }
 
-  // ---- FALLBACK PATH: visible challenge + Browserbase / human solve ----------
-  log.warn("CAPTCHA challenge present — initiating checkbox + waiting to solve", { sessionUrl });
-  await clickRecaptchaCheckbox(page, log);
-  await (waitForCaptcha?.({ startGraceMs: 2500 }) ?? Promise.resolve(false));
-
+  // ---- Manual / human fallback (keeps polling + nudging) ---------------------
+  log.warn("CAPTCHA still up after automated attempts — waiting (Browser Use/human)", { sessionUrl });
   const deadline = Date.now() + manualTimeoutMs;
   let lastLog = 0;
   let lastNudge = Date.now();
-  let nudges = 1;
+  let nudges = 0;
   while (Date.now() < deadline) {
     if (!(await captchaPresent(page))) {
       log.info("CAPTCHA cleared");
       return true;
     }
-    // Periodically re-nudge the checkbox in case the first didn't register.
+    // Periodically re-nudge the checkbox and click Next, so a late Browser Use
+    // or human solve actually advances the modal.
     if (Date.now() - lastNudge > 18000 && nudges < 4) {
       await clickRecaptchaCheckbox(page, log);
+      await submitSolvedCaptcha(page, log);
       lastNudge = Date.now();
       nudges += 1;
     }
@@ -705,10 +1237,267 @@ async function ensureCaptchaSolved({
       log.warn(`CAPTCHA still up — watch/solve live: ${sessionUrl || "(session URL unavailable)"}`);
       lastLog = Date.now();
     }
-    await (waitForCaptcha?.({ startGraceMs: 0 }) ?? Promise.resolve(false));
     await sleep(3000);
   }
   log.warn("Timed out waiting for CAPTCHA to clear; continuing best-effort");
+  return true;
+}
+
+// --- "Confirm you're human" image-code challenge (LLM vision OCR) -----------
+// This is a DIFFERENT challenge from reCAPTCHA: Instagram shows a card titled
+// "Confirm you're human" with a DISTORTED NUMBER/letter image and an "Enter the
+// code from the image" box. There's no token to inject and CapSolver's
+// reCAPTCHA task doesn't apply — the only way through is to actually READ the
+// warped code. We screenshot just the code image and send it to our LLM (Gemini
+// vision); it returns the code, we type it and submit. On a misread we click
+// "Get a new code" and try a fresh image.
+
+// Selectors for the code input on the image-code challenge. IG's box uses the
+// placeholder "Enter the code from the image".
+const IMAGE_CAPTCHA_INPUT_SELECTORS = [
+  'input[placeholder*="code from the image" i]',
+  'input[placeholder*="enter the code" i]',
+  'input[aria-label*="code from the image" i]',
+  'input[aria-label*="enter the code" i]',
+  'input[name*="captcha" i]',
+];
+
+// True when the distorted image-code "Confirm you're human" challenge is on
+// screen — detected by its code input or its distinctive instruction text.
+async function imageCaptchaPresent(page) {
+  if (await firstVisibleSelector(page, IMAGE_CAPTCHA_INPUT_SELECTORS)) return true;
+  return page
+    .evaluate(() => {
+      const t = ((document.body && document.body.innerText) || "").toLowerCase();
+      const human =
+        t.includes("confirm you're human") || t.includes("confirm you\u2019re human");
+      const code =
+        t.includes("code from the image") ||
+        t.includes("enter the code from the image") ||
+        (t.includes("hear this code") && t.includes("get a new code"));
+      return human && code;
+    })
+    .catch(() => false);
+}
+
+// Computes a viewport-clamped clip rectangle around the distorted code image so
+// we screenshot ONLY the code (the cleanest OCR signal). Picks the largest
+// plausibly-sized <img>/<canvas>/<svg> that sits above the code input; returns
+// null if none is found (caller then falls back to a full-page screenshot).
+async function captchaImageClip(page) {
+  return page
+    .evaluate((inputSelectors) => {
+      const isVisible = (el) => {
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      let input = null;
+      for (const sel of inputSelectors) {
+        const el = document.querySelector(sel);
+        if (el && isVisible(el)) {
+          input = el;
+          break;
+        }
+      }
+      const inputTop = input ? input.getBoundingClientRect().top : Infinity;
+      const nodes = Array.from(document.querySelectorAll("img, canvas, svg")).filter(isVisible);
+      const candidates = nodes
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left, y: r.top, width: r.width, height: r.height, area: r.width * r.height };
+        })
+        // Plausible CAPTCHA size — skip tiny icons and full-width banners.
+        .filter((r) => r.width >= 70 && r.width <= 700 && r.height >= 22 && r.height <= 320)
+        // The code image sits above the input box.
+        .filter((r) => r.y < inputTop)
+        .sort((a, b) => b.area - a.area);
+      const pick = candidates[0];
+      if (!pick) return null;
+      const pad = 6;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const x = Math.max(0, Math.floor(pick.x - pad));
+      const y = Math.max(0, Math.floor(pick.y - pad));
+      const width = Math.min(Math.ceil(pick.width + pad * 2), vw - x);
+      const height = Math.min(Math.ceil(pick.height + pad * 2), vh - y);
+      if (width <= 0 || height <= 0) return null;
+      return { x, y, width, height };
+    }, IMAGE_CAPTCHA_INPUT_SELECTORS)
+    .catch(() => null);
+}
+
+// Screenshots the code image (clipped when we can locate it, else the whole
+// viewport) and returns it as { base64, mimeType } for the LLM. Never throws.
+async function captureCaptchaImage(page, log) {
+  const clip = await captchaImageClip(page);
+  if (clip) {
+    try {
+      const buf = await page.screenshot({ clip, type: "png" });
+      if (buf && buf.length) {
+        return { base64: Buffer.from(buf).toString("base64"), mimeType: "image/png" };
+      }
+    } catch (e) {
+      log?.warn("captcha clip screenshot failed; falling back to full page", e?.message);
+    }
+  }
+  try {
+    const buf = await page.screenshot({ type: "png" });
+    if (buf && buf.length) {
+      return { base64: Buffer.from(buf).toString("base64"), mimeType: "image/png" };
+    }
+  } catch (e) {
+    log?.warn("captcha full-page screenshot failed", e?.message);
+  }
+  return null;
+}
+
+// Asks Instagram for a fresh code image (used after the LLM misreads one).
+async function requestNewImageCode(page) {
+  return clickButtonByText(page, [
+    "Get a new code",
+    "Get a new",
+    "New code",
+    "Refresh",
+    "Try a different code",
+  ]);
+}
+
+// Reads the distorted image code with two engines:
+//   1. PRIMARY — our LLM, Gemini vision (gemini.readCaptchaCode).
+//   2. BACKUP — CapSolver's ImageToText OCR (capsolver.solveImageToText), a
+//      service purpose-built to read "enter the code from the image" challenges.
+// `preferBackup` flips the order so a repeatedly-wrong primary yields to the
+// other engine on the next retry. Returns { code, source } — code is null when
+// no engine could read one. Never throws.
+async function readImageCaptchaCode({ shot, page, preferBackup, log }) {
+  const readWithGemini = async () => {
+    if (!gemini.isConfigured()) return null;
+    return gemini.readCaptchaCode({
+      imageBase64: shot.base64,
+      mimeType: shot.mimeType,
+      hint: "usually a 6-digit number",
+    });
+  };
+  const readWithCapsolver = async () => {
+    if (!capsolver.isConfigured()) return null;
+    let websiteURL = "";
+    try {
+      websiteURL = page.url();
+    } catch {
+      /* page may be gone */
+    }
+    try {
+      const text = await capsolver.solveImageToText({
+        imageBase64: shot.base64,
+        module: config.capsolver.imageToTextModule || undefined,
+        websiteURL: websiteURL || undefined,
+      });
+      const clean = (text || "").replace(/[^a-z0-9]/gi, "").trim();
+      return clean || null;
+    } catch (e) {
+      log.warn("CapSolver ImageToText failed", e?.message);
+      return null;
+    }
+  };
+
+  const engines = preferBackup
+    ? [["capsolver", readWithCapsolver], ["gemini", readWithGemini]]
+    : [["gemini", readWithGemini], ["capsolver", readWithCapsolver]];
+
+  for (const [source, read] of engines) {
+    const code = await read();
+    if (code) return { code, source };
+  }
+  return { code: null, source: null };
+}
+
+// Solves the "Confirm you're human" image-code challenge if it's present:
+// screenshot the code -> read it (Gemini LLM primary, CapSolver ImageToText OCR
+// backup) -> type + submit. On a misread it requests a fresh code and switches
+// engines for the next try. Returns true if the challenge was present (handled),
+// false if no such challenge was on screen. Never throws.
+async function solveImageCaptchaIfPresent({ stagehand, page, log, capture, attempts = 4 }) {
+  if (!(await imageCaptchaPresent(page))) return false;
+  await capture?.("image-code-captcha-detected");
+  log.info(
+    '"Confirm you\'re human" image-code challenge detected — solving (Gemini primary, CapSolver ImageToText backup)'
+  );
+
+  const geminiReady = gemini.isConfigured();
+  const capsolverReady = capsolver.isConfigured();
+  if (!geminiReady && !capsolverReady) {
+    log.warn(
+      "Image-code challenge present but neither GEMINI_API_KEY nor CAPSOLVER_API_KEY is set — cannot auto-read the code (solve it live)"
+    );
+    return true;
+  }
+
+  let preferBackup = false;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (!(await imageCaptchaPresent(page))) {
+      log.info("Image-code CAPTCHA cleared");
+      return true;
+    }
+
+    const shot = await captureCaptchaImage(page, log);
+    if (!shot) {
+      log.warn(`Image-code CAPTCHA: couldn't capture the code image (attempt ${attempt}/${attempts})`);
+      await requestNewImageCode(page);
+      await sleep(1800);
+      continue;
+    }
+
+    const { code, source } = await readImageCaptchaCode({ shot, page, preferBackup, log });
+    if (!code) {
+      log.warn(
+        `Image-code CAPTCHA: no engine could read a code (attempt ${attempt}/${attempts}) — requesting a new one`
+      );
+      await requestNewImageCode(page);
+      await sleep(1800);
+      continue;
+    }
+
+    log.info(`Image-code CAPTCHA: ${source} read "${code}" (attempt ${attempt}/${attempts})`);
+    await fastFill(stagehand, page, {
+      selectors: [...IMAGE_CAPTCHA_INPUT_SELECTORS, 'input[type="text"]', 'input[type="tel"]'],
+      value: code,
+      describe: "confirm-you're-human image code field",
+      key: "imagecaptcha",
+      log,
+    });
+    await sleep(400);
+    await pressButton(stagehand, page, {
+      texts: ["Next", "Continue", "Submit", "Confirm", "Verify"],
+      cssFallback: ['button[type="submit"]'],
+      act: "click the Next button to submit the confirmation code",
+      log,
+    });
+
+    // Wait for the challenge to clear after submitting.
+    let cleared = false;
+    for (let i = 0; i < 6 && !cleared; i++) {
+      await sleep(1000);
+      cleared = !(await imageCaptchaPresent(page));
+    }
+    if (cleared) {
+      log.info(`Image-code CAPTCHA cleared (${source} read "${code}")`);
+      await capture?.("image-code-captcha-cleared");
+      return true;
+    }
+
+    // Still up — wrong read or rejected. Switch engines and refresh the code.
+    preferBackup = !preferBackup;
+    log.warn(
+      `Image-code CAPTCHA still present after submitting "${code}" (${source}) — refreshing code, switching engine`
+    );
+    await requestNewImageCode(page);
+    await sleep(1800);
+  }
+
+  log.warn("Image-code CAPTCHA still present after Gemini + CapSolver attempts");
+  await capture?.("image-code-captcha-unsolved");
   return true;
 }
 
@@ -940,6 +1729,10 @@ async function setCombobox(page, selector, { optionText, expects }) {
     if (textIncludesAny(info.text, expects)) return true;
 
     await page.keyPress("Escape").catch(() => {});
+    // Drift the cursor onto the trigger and pause before opening it — a person
+    // doesn't pop a dropdown the instant the previous one closed.
+    await moveMouseToSelector(page, selector);
+    await thinkTime(120, 320);
     await page.locator(selector).first().click().catch(() => {});
 
     const listSel = info.ariaControls ? `[id="${info.ariaControls}"]` : '[role="listbox"]';
@@ -965,6 +1758,10 @@ async function setCombobox(page, selector, { optionText, expects }) {
       .catch(() => null);
 
     if (pt && pt.x > 0 && pt.y > 0) {
+      // Move to the option along a human arc and pause (scan the list) before
+      // committing the selection.
+      await moveMouseTo(page, pt.x, pt.y);
+      await thinkTime(80, 220);
       await page.click(pt.x, pt.y).catch(() => {});
       await page.waitForTimeout(250);
       const after = await elInfo(page, selector);
@@ -1025,12 +1822,17 @@ async function waitForBirthdaySet(page, dob, { timeoutMs = 6000, intervalMs = 40
   }
 }
 
-// Detects whether the birthday controls are present on the page right now.
+// Detects whether the birthday controls are present AND visible right now. The
+// visibility check matters: IG's SPA leaves the previous step's Month combobox
+// mounted-but-hidden in the DOM (seen on the email-confirmation step), so a
+// presence-only check false-positived and sent us re-filling a phantom birthday
+// — wasting time and firing extra bot-like resubmits — after we'd already
+// advanced past the signup form.
 async function birthdayPresent(page) {
   const combo = await elInfo(page, BIRTHDAY_COMBO.month);
-  if (combo) return true;
+  if (combo && combo.visible) return true;
   const sel = await elInfo(page, BIRTHDAY_SELECT.month);
-  return Boolean(sel);
+  return Boolean(sel && sel.visible);
 }
 
 // Polls for the birthday controls to render (page transitions are async).
@@ -1059,10 +1861,12 @@ async function fillBirthday(stagehand, page, dob, log) {
       optionText: dob.monthName,
       expects: [dob.monthName, String(dob.monthNumber)],
     });
+    await thinkTime(220, 560);
     await setBirthdayField(page, "day", {
       optionText: String(dob.day),
       expects: [String(dob.day)],
     });
+    await thinkTime(220, 560);
     await setBirthdayField(page, "year", {
       optionText: String(dob.year),
       expects: [String(dob.year)],
@@ -1100,64 +1904,90 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
 
   log.info("Creating IG account", { username, email, dob });
 
-  const result = await withStagehand(async ({ stagehand, page, waitForCaptcha, sessionUrl }) => {
+  const result = await withStagehand(async ({ stagehand, page, sessionUrl }) => {
     const capture = makeStepCapture(page, debugDir);
-    // Clears any CAPTCHA before continuing: Browserbase auto-solve first, then a
-    // human-in-the-loop fallback (via the live session URL) if it persists.
-    const settleCaptcha = () => ensureCaptchaSolved({ page, waitForCaptcha, sessionUrl, log });
+    // Clears any challenge before continuing. Two distinct kinds:
+    //   1. reCAPTCHA ("I'm not a robot") — Browser Use's in-browser bypass first,
+    //      then CapSolver, then a human-in-the-loop fallback (ensureCaptchaSolved).
+    //   2. The "Confirm you're human" DISTORTED IMAGE-CODE card — read with the
+    //      LLM (Gemini vision) and submitted (solveImageCaptchaIfPresent).
+    // Each is a fast no-op when its challenge isn't on screen, so calling both
+    // everywhere we settle is safe.
+    const settleCaptcha = async () => {
+      const hadRecaptcha = await ensureCaptchaSolved({ page, sessionUrl, log });
+      const hadImageCode = await solveImageCaptchaIfPresent({ stagehand, page, log, capture });
+      return hadRecaptcha || hadImageCode;
+    };
 
-    await page.goto("https://www.instagram.com/accounts/emailsignup/", {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    });
+    // Realistic entry: homepage → (read/scroll/cursor) → click "Sign up" → form,
+    // instead of a cold, referrer-less deep-link to the signup endpoint.
+    await warmUpEntry({ page, log, capture, settleCaptcha });
     await capture("signup-page-loaded");
     // IG can gate the signup page itself behind a challenge.
     await settleCaptcha();
 
-    // Wait for the email field to appear instead of a blind sleep.
-    const emailField = await firstVisible(page, [
-      'input[name="emailOrPhone"]',
-      'input[name="email"]',
-      'input[type="email"]',
-      'input[aria-label*="email" i]',
-    ]);
-    if (!emailField) await sleep(2000);
+    // Wait for the signup form's email/mobile field to actually render (poll;
+    // IG inputs no longer carry name/aria-label, so resolve it by type or by its
+    // wrapping <label> text).
+    for (let i = 0; i < 20; i++) {
+      const ready =
+        (await firstVisibleSelector(page, ['input[type="email"]', 'input[type="text"]'])) ||
+        (await tagInputByLabel(page, { keywords: ["mobile number or email", "email"], key: "email" }));
+      if (ready) break;
+      await sleep(500);
+    }
 
-    // Cookie banners block IG in some regions; dismiss by the dialog's specific
-    // labels (no-op if no banner is present).
-    await clickButtonByText(page, [
-      "Allow all cookies",
-      "Accept all",
-      "Accept All",
-      "Allow all",
-      "Only allow essential cookies",
-    ]).catch(() => {});
+    // Cookie banners block IG in some regions; dismiss (no-op if not present).
+    await dismissCookieBanner(page);
 
-    // Fill the four signup fields via direct locators (no LLM round-trips).
-    await fastFill(stagehand, page, {
+    // Register genuine human engagement BEFORE the first keystroke: read the
+    // form, drift the cursor onto it, and a small scroll. Instantly typing the
+    // millisecond a form paints is a classic automation tell.
+    await readPause();
+    await idleMouseDrift(page);
+    await hoverSafely(page, ['input[type="email"]', 'input[type="text"]', "h2", "h1"]);
+    await gentleScroll(page, log);
+
+    // Fill the four signup fields. IG's inputs lost their name/aria-label, so we
+    // pass label keywords as the durable fallback and VERIFY each value took
+    // (the empty-email field is what silently froze the whole flow). Keywords are
+    // specific so e.g. "username" never matches the email/name labels.
+    const emailFilled = await fastFill(stagehand, page, {
       selectors: ['input[name="emailOrPhone"]', 'input[name="email"]', 'input[type="email"]'],
+      labelKeywords: ["mobile number or email", "email", "mobile number"],
       value: email,
-      describe: "email field",
+      describe: "email or mobile number field",
+      key: "email",
       log,
     });
+    await thinkTime(280, 720);
     await fastFill(stagehand, page, {
       selectors: ['input[name="fullName"]', 'input[aria-label*="Full" i]'],
+      labelKeywords: ["full name"],
       value: fullName,
       describe: "full name field",
+      key: "fullname",
       log,
     });
+    await thinkTime(280, 720);
     await fastFill(stagehand, page, {
-      selectors: ['input[name="username"]', 'input[aria-label*="user" i]'],
+      selectors: ['input[name="username"]', 'input[aria-label*="user" i]', 'input[type="search"]'],
+      labelKeywords: ["username"],
       value: username,
       describe: "username field",
+      key: "username",
       log,
     });
+    await thinkTime(280, 720);
     await fastFill(stagehand, page, {
       selectors: ['input[name="password"]', 'input[type="password"]'],
+      labelKeywords: ["password"],
       value: password,
       describe: "password field",
+      key: "password",
       log,
     });
+    if (!emailFilled) log.warn("Email field did not confirm a value after filling");
     await capture("text-fields-filled");
 
     // Newer IG layout renders the birthday (Month/Day/Year) inline on the same
@@ -1176,8 +2006,53 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
         log,
       });
 
+    // GUARD: IG silently refuses to advance from the signup form when the
+    // email/mobile field is empty — that exact empty field (its selector had
+    // changed) is what froze a prior run for ~150s on a form that never moved.
+    // Confirm the field holds our email right before submitting; refill once if a
+    // re-render cleared it, and bail fast with a clear reason if we truly cannot
+    // populate it (rather than marching into an unwinnable email-code wait).
+    const ensureEmailFilled = async () => {
+      const sel =
+        (await firstVisibleSelector(page, ['input[type="email"]'])) ||
+        (await tagInputByLabel(page, {
+          keywords: ["mobile number or email", "email", "mobile number"],
+          key: "email",
+        }));
+      const current = await readInputValue(page, sel);
+      if (current && current.trim() === String(email).trim()) return true;
+      log.warn(`Email field not populated before submit (got "${current || ""}") — refilling`);
+      return fastFill(stagehand, page, {
+        selectors: ['input[name="emailOrPhone"]', 'input[name="email"]', 'input[type="email"]'],
+        labelKeywords: ["mobile number or email", "email", "mobile number"],
+        value: email,
+        describe: "email or mobile number field",
+        key: "email",
+        log,
+      });
+    };
+
+    if (!(await ensureEmailFilled())) {
+      await capture("email-fill-failed");
+      log.warn(
+        "Could not enter the email into Instagram's signup form — aborting run early (IG will not advance with an empty email)"
+      );
+      return {
+        loggedIn: false,
+        blockedByEmail: true,
+        email,
+        sessionUrl,
+        note: `Could not type the email into Instagram's signup form (the field selector likely changed). Inspect/solve live at ${sessionUrl || "the Browser Use dashboard"}.`,
+      };
+    }
+
+    // A human "review the form" beat — drift the cursor to the submit button and
+    // pause to "re-read" — before committing, like a real signup (not an instant
+    // machine click the moment the last field is filled).
+    await hoverSafely(page, ['button[type="submit"]']);
+    await readPause(800, 1800);
     await submit();
-    await sleep(2500);
+    await sleep(randomInt(2400, 3600));
     await capture("after-submit");
 
     // If IG rejected the EMAIL ADDRESS up front (disposable domain on Meta's
@@ -1199,8 +2074,10 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
       }
       await fastFill(stagehand, page, {
         selectors: ['input[name="emailOrPhone"]', 'input[name="email"]', 'input[type="email"]'],
+        labelKeywords: ["mobile number or email", "email", "mobile number"],
         value: email,
-        describe: "email field",
+        describe: "email or mobile number field",
+        key: "email",
         log,
       });
       // DOB can clear when the form re-renders; re-fill if it's showing again.
@@ -1228,8 +2105,8 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     }
 
     // After submitting the form IG most often shows the "Help us confirm it's
-    // you" reCAPTCHA. Wait for Browserbase to solve it before we look for the
-    // next step, otherwise our extract()/clicks race the solver.
+    // you" reCAPTCHA. Settle it before we look for the next step, otherwise our
+    // extract()/clicks race the solver.
     const solvedAtSignup = await settleCaptcha();
     await capture(solvedAtSignup ? "captcha-cleared-after-submit" : "no-captcha-after-submit");
     if (solvedAtSignup) {
@@ -1251,6 +2128,9 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     if (birthdayStep) {
       log.info("Birthday step detected");
       await capture("birthday-step-detected");
+      // A beat to "read" the new screen before operating its controls.
+      await readPause();
+      await idleMouseDrift(page);
       const filled = await fillBirthday(stagehand, page, dob, log);
       // Don't advance until DOB is confirmed; otherwise we'd submit an empty
       // form and IG keeps us on the same step.
@@ -1258,6 +2138,8 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
       await capture("birthday-step-filled");
       await sleep(400);
 
+      await hoverSafely(page, ['button[type="submit"]']);
+      await thinkTime(500, 1200);
       await pressButton(stagehand, page, {
         texts: ["Next", "Submit"],
         cssFallback: ['button[type="submit"]'],
@@ -1278,12 +2160,22 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     let needsEmail = false;
     for (let i = 0; i < 12 && !needsEmail; i++) {
       needsEmail = await emailCodeStepPresent(page);
-      if (!needsEmail) await sleep(1000);
+      if (needsEmail) break;
+      // A late "Confirm you're human" image-code card can appear here (between
+      // the birthday and email steps) — read + submit it with the LLM, then
+      // keep polling for the email step.
+      if (await imageCaptchaPresent(page)) {
+        await solveImageCaptchaIfPresent({ stagehand, page, log, capture });
+      }
+      await sleep(1000);
     }
 
     if (needsEmail) {
       log.info("Email confirmation required");
       await capture("email-code-requested");
+      // A person reads the "we sent a code to…" screen before entering anything.
+      await readPause();
+      await idleMouseDrift(page);
 
       const emailStepAt = Date.now();
       // The first valid code may have been sent at any point during this signup
@@ -1364,20 +2256,26 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
           blockedByEmail: true,
           email,
           sessionUrl,
-          note: `Stuck on Instagram's email confirmation: ${reason}.${hint} Watch/solve live at ${sessionUrl || "the Browserbase session"}, or submit a code manually from the dashboard.`,
+          note: `Stuck on Instagram's email confirmation: ${reason}.${hint} Watch/solve live at ${sessionUrl || "the Browser Use dashboard"}, or submit a code manually from the dashboard.`,
         };
       }
     } else {
       log.info("No email confirmation step detected");
     }
 
+    // A challenge can appear at the very end (e.g. right after the birthday step
+    // when there's no email step) — give it one more solve pass before we give
+    // up, instead of immediately reporting "blocked".
+    await settleCaptcha();
+
     // If a CAPTCHA is STILL on screen at the end, that's the blocker — surface
     // it explicitly so the account record says *why* (rather than a vague
-    // "not logged in"). IG's reCAPTCHA Enterprise needs either a CapSolver key
-    // (CAPSOLVER_API_KEY, recommended), Browserbase residential proxies (paid),
-    // or a human solve via the live session URL.
+    // "not logged in"). Browser Use bypasses most CAPTCHAs in-browser; when IG's
+    // reCAPTCHA Enterprise slips through, it needs either a CapSolver key
+    // (CAPSOLVER_API_KEY), a residential proxy (BROWSER_USE_PROXY_COUNTRY), or a
+    // human solve via the live session.
     if (await captchaPresent(page)) {
-      log.warn("Finished with a CAPTCHA still blocking — CapSolver key / proxies / manual solve required", { sessionUrl });
+      log.warn("Finished with a CAPTCHA still blocking — CapSolver key / residential proxy / manual solve required", { sessionUrl });
       await capture("blocked-by-captcha");
       const remedy = capsolver.isConfigured()
         ? "CapSolver couldn't clear it this run"
@@ -1386,7 +2284,57 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
         loggedIn: false,
         blockedByCaptcha: true,
         sessionUrl,
-        note: `Blocked by Instagram CAPTCHA (${remedy}). Solve it live at ${sessionUrl || "the Browserbase session"}, or enable Browserbase residential proxies (paid plan).`,
+        note: `Blocked by Instagram CAPTCHA (${remedy}). Solve it live at ${sessionUrl || "the Browser Use dashboard"}, or route through a residential proxy via BROWSER_USE_PROXY_COUNTRY.`,
+      };
+    }
+
+    // Same for the distorted image-code "Confirm you're human" challenge. It has
+    // no reCAPTCHA iframe (so captchaPresent above misses it) and lives on a
+    // /challenge/ URL, so surface it explicitly here — BEFORE the URL check below
+    // mislabels it as a generic suspension — when the LLM couldn't read it.
+    if (await imageCaptchaPresent(page)) {
+      log.warn("Finished with the image-code 'Confirm you're human' challenge still blocking", { sessionUrl });
+      await capture("blocked-by-image-captcha");
+      const remedy =
+        gemini.isConfigured() || capsolver.isConfigured()
+          ? "the LLM (Gemini) and CapSolver ImageToText OCR both couldn't read the distorted code this run"
+          : "set GEMINI_API_KEY and/or CAPSOLVER_API_KEY so the code can be read automatically";
+      return {
+        loggedIn: false,
+        blockedByCaptcha: true,
+        sessionUrl,
+        note: `Blocked by Instagram's "Confirm you're human" image-code challenge (${remedy}). Solve it live at ${sessionUrl || "the Browser Use dashboard"}.`,
+      };
+    }
+
+    // GROUND TRUTH over the LLM: if IG parked us on a suspension / challenge /
+    // disabled URL, the account is NOT a clean login no matter how the page
+    // "reads". The a11y-snapshot extract() has literally called the
+    // /accounts/suspended/ "Confirm you're human to use your account" page
+    // "logged in requiring verification" — a false positive that would record a
+    // suspended account as usable. Treat the URL as authoritative.
+    let finalUrl = "";
+    try {
+      finalUrl = page.url();
+    } catch {
+      /* page may be gone */
+    }
+    if (/\/accounts\/(suspended|disabled)\/|\/challenge\/|\/integrity\//i.test(finalUrl)) {
+      log.warn("Finished on an Instagram restriction page — account created but gated, not a clean login", {
+        finalUrl,
+        sessionUrl,
+      });
+      await capture("account-restricted");
+      const kind = /suspended/i.test(finalUrl)
+        ? "suspended"
+        : /disabled/i.test(finalUrl)
+          ? "disabled"
+          : "challenged";
+      return {
+        loggedIn: false,
+        blockedBySuspension: true,
+        sessionUrl,
+        note: `Instagram created the account but immediately ${kind} it ("confirm you're human"). Fresh automated signups are routinely gated pending phone verification — getting a usable account from here needs SMS/phone verification, a higher-trust residential/mobile proxy, and/or account warming. URL: ${finalUrl}`,
       };
     }
 
@@ -1402,7 +2350,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
   }, { onSession });
 
   // Posting re-authenticates with the stored credentials, so we don't need to
-  // persist a Browserbase context here (avoids feeding a bad context id back in).
+  // persist a browser profile here (avoids feeding a bad context id back in).
   return {
     username,
     password,
@@ -1412,6 +2360,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     loggedIn: result.loggedIn,
     blockedByCaptcha: Boolean(result.blockedByCaptcha),
     blockedByEmail: Boolean(result.blockedByEmail),
+    blockedBySuspension: Boolean(result.blockedBySuspension),
     note: result.note,
     session: {},
   };

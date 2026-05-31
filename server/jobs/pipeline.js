@@ -65,10 +65,13 @@ export async function spawnAccount({ influencerId }) {
   let account = await repo.igAccounts.forInfluencer(influencerId);
   if (!account) account = await repo.igAccounts.create({ influencerId });
 
-  // Provision a fresh inbox-backed address if none was set, so the email
-  // verification code can be polled automatically during signup.
+  // Provision a FRESH inbox-backed address for every signup attempt that isn't
+  // resuming an already-active account. Instagram binds an address to a signup
+  // the instant the form is submitted, so reusing the one persisted from a prior
+  // FAILED attempt trips "email already in use" and dooms the retry. Only an
+  // already-active account keeps its address (that signup succeeded with it).
   let email = account.email;
-  if (!email) {
+  if (!email || account.status !== "active") {
     email = await generateEmail({ seed: influencer.handle || influencer.name });
     account = await repo.igAccounts.update(account.id, { email });
   }

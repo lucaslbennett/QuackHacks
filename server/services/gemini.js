@@ -19,6 +19,32 @@ export function isConfigured() {
   return Boolean(config.gemini.apiKey);
 }
 
+// Liveness check: confirms the configured GEMINI_API_KEY is actually ACCEPTED by
+// Google, not merely present. A non-empty-but-dead key (e.g. an expired/revoked
+// or misconfigured service-account-bound "AQ." key) returns 401 on every call,
+// which otherwise surfaces deep inside a browser run as an opaque "act fallback
+// failed" / "email code not accepted". Callers use this to fail fast with an
+// actionable message. Returns { ok: true } or { ok: false, status?, message }.
+// Never throws.
+export async function verifyAccess() {
+  if (!config.gemini.apiKey) {
+    return { ok: false, message: "GEMINI_API_KEY is not set" };
+  }
+  try {
+    const c = getClient();
+    await c.models.generateContent({
+      model: config.gemini.model,
+      contents: "ping",
+      config: { maxOutputTokens: 8, thinkingConfig: { thinkingBudget: 0 } },
+    });
+    return { ok: true };
+  } catch (err) {
+    const message = String(err?.message || err);
+    const status = /"?code"?\s*[:=]\s*(\d{3})|\b(4\d\d|5\d\d)\b/.exec(message);
+    return { ok: false, status: status?.[1] || status?.[2], message };
+  }
+}
+
 // Low level helper that asks Gemini for JSON and parses it defensively.
 // `temperature` lets callers crank up variety (e.g. fresh post captions) while
 // most callers keep the default for stable, on-brand output.
@@ -64,6 +90,68 @@ function parseJson(text) {
       }
     }
     throw new Error("Failed to parse JSON from model output");
+  }
+}
+
+// Reads the distorted verification/security code out of a "Confirm you're
+// human" CAPTCHA image using Gemini's vision model. This is how we beat
+// Instagram's image-code challenge (a warped number/letter image you must read
+// and type): the signup flow screenshots just the code image and hands it here.
+//
+// Best-effort OCR — returns the code as a clean alphanumeric string (no spaces)
+// or null if the model couldn't read one. NEVER throws; the caller falls back to
+// requesting a fresh code or a live/human solve when this returns null.
+export async function readCaptchaCode({ imageBase64, mimeType = "image/png", hint } = {}) {
+  if (!imageBase64) return null;
+  const model = config.gemini.captchaModel || config.gemini.model;
+  const system =
+    "You are a precise OCR engine that reads short verification codes out of " +
+    "distorted CAPTCHA images. The code is warped and crossed out with random " +
+    "lines, dots and scribbles meant to fool machines. Ignore every line, mark " +
+    "and background texture — transcribe ONLY the foreground characters of the " +
+    "code, left to right, in order. Codes are typically 5-8 characters, usually " +
+    "digits but sometimes letters. Respond with strict JSON only.";
+  const promptText =
+    "Read the verification code shown in this image" +
+    (hint ? ` (${hint})` : "") +
+    '. If the image is a full-page screenshot, the code is the distorted text ' +
+    'above the "Enter the code from the image" box. ' +
+    'Return strict JSON: {"code": string}. "code" must contain ONLY the code ' +
+    "characters — no spaces, quotes or punctuation.";
+  try {
+    const c = getClient();
+    const res = await c.models.generateContent({
+      model,
+      contents: [
+        { text: promptText },
+        { inlineData: { mimeType, data: imageBase64 } },
+      ],
+      config: {
+        systemInstruction: system,
+        maxOutputTokens: 200,
+        responseMimeType: "application/json",
+        // Deterministic: we want the single most-likely reading, not variety.
+        temperature: 0,
+      },
+    });
+    const text = (res.text || "").trim();
+    if (!text) return null;
+    let code = "";
+    try {
+      const parsed = parseJson(text);
+      code = String(parsed?.code ?? "");
+    } catch {
+      // Model ignored the JSON instruction — salvage the raw text.
+      code = text;
+    }
+    // Keep only code characters (strips quotes/spaces/punctuation the model may add).
+    code = code.replace(/[^a-z0-9]/gi, "").trim();
+    if (!code) return null;
+    log.info(`readCaptchaCode -> "${code}" (model ${model})`);
+    return code;
+  } catch (err) {
+    log.warn("readCaptchaCode failed", err?.message);
+    return null;
   }
 }
 

@@ -5,7 +5,7 @@ import {
   type TestInputs,
   type StatusResponse,
   type Persona,
-  type BrowserbaseResult,
+  type BrowserUseResult,
   type SpawnRun,
   type StepState,
 } from "../lib/testApi";
@@ -50,11 +50,11 @@ export default function TestPanel() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [inputs, setInputs] = useState<TestInputs>(() => autofillInputs());
 
-  const [busy, setBusy] = useState<null | "persona" | "browserbase" | "spawn">(null);
+  const [busy, setBusy] = useState<null | "persona" | "browseruse" | "spawn">(null);
   const [error, setError] = useState<string | null>(null);
 
   const [persona, setPersona] = useState<Persona | null>(null);
-  const [browser, setBrowser] = useState<BrowserbaseResult | null>(null);
+  const [browser, setBrowser] = useState<BrowserUseResult | null>(null);
   const [run, setRun] = useState<SpawnRun | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -106,12 +106,12 @@ export default function TestPanel() {
     }
   };
 
-  const handleBrowserbase = async () => {
-    setBusy("browserbase");
+  const handleBrowserUse = async () => {
+    setBusy("browseruse");
     setError(null);
     setBrowser(null);
     try {
-      const data = await testApi.testBrowserbase();
+      const data = await testApi.testBrowserUse();
       setBrowser(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
@@ -146,7 +146,7 @@ export default function TestPanel() {
   }
 
   const igConfigured = Boolean(status?.integrations.gemini);
-  const bbConfigured = Boolean(status?.integrations.browserbase);
+  const bbConfigured = Boolean(status?.integrations.browserUse);
 
   return (
     <div className="fixed bottom-5 right-5 z-[60] flex max-h-[85vh] w-[360px] flex-col overflow-hidden rounded-2xl border border-black/10 bg-white text-black shadow-2xl">
@@ -177,7 +177,7 @@ export default function TestPanel() {
             <Dot ok={igConfigured} /> Gemini
           </span>
           <span className="flex items-center gap-1.5">
-            <Dot ok={bbConfigured} /> Browserbase
+            <Dot ok={bbConfigured} /> Browser Use
           </span>
           <span className="flex items-center gap-1.5">
             <Dot ok={Boolean(status?.integrations.capsolver)} /> CapSolver
@@ -236,11 +236,11 @@ export default function TestPanel() {
           </button>
           <button
             type="button"
-            onClick={handleBrowserbase}
+            onClick={handleBrowserUse}
             disabled={busy !== null || !bbConfigured}
             className="w-full rounded-lg border border-black/20 px-3 py-2 text-[13px] font-medium transition-colors hover:bg-black hover:text-white disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-black"
           >
-            {busy === "browserbase" ? "Launching…" : "Test Browserbase Session"}
+            {busy === "browseruse" ? "Launching…" : "Test Browser Use Session"}
           </button>
           <button
             type="button"
@@ -274,10 +274,10 @@ export default function TestPanel() {
           </div>
         )}
 
-        {/* Browserbase result */}
+        {/* Browser Use result */}
         {browser && (
           <div className="mt-4 rounded-lg border border-black/10 bg-black/[0.03] p-3 text-[12px]">
-            <div className="mb-1 font-semibold">Browserbase session</div>
+            <div className="mb-1 font-semibold">Browser Use session</div>
             {browser.title && <div className="text-black/70">{browser.title}</div>}
             {browser.sessionUrl && (
               <a
@@ -300,7 +300,7 @@ export default function TestPanel() {
             </div>
             <div className="space-y-1">
               <Step state={run.steps.persona} label="Generate agent persona" />
-              <Step state={run.steps.session} label="Launch Browserbase session" />
+              <Step state={run.steps.session} label="Launch Browser Use session" />
               <Step state={run.steps.account} label="Create user account" />
             </div>
 

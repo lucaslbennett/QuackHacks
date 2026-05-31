@@ -43,6 +43,11 @@ export const config = {
     // generation. GA model id (the -preview variant is deprecated). Override
     // with GEMINI_IMAGE_MODEL (e.g. gemini-3-pro-image for Nano Banana Pro).
     imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
+    // Vision model used to OCR Instagram's distorted "Confirm you're human"
+    // image-code challenge. Defaults to the main model (our current LLM); set
+    // GEMINI_CAPTCHA_MODEL to a stronger vision model if reads are unreliable.
+    captchaModel:
+      process.env.GEMINI_CAPTCHA_MODEL || process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
   },
 
   elevenlabs: {
@@ -52,35 +57,65 @@ export const config = {
     defaultVoiceId: process.env.ELEVENLABS_DEFAULT_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb",
   },
 
-  browserbase: {
-    apiKey: process.env.BROWSERBASE_API_KEY || "",
-    projectId: process.env.BROWSERBASE_PROJECT_ID || "",
-    // Stagehand needs a model for its act/extract reasoning. Reuse Gemini.
-    env: process.env.STAGEHAND_ENV || "BROWSERBASE",
-    // Residential proxies reduce how often Instagram throws a CAPTCHA and
-    // improve Browserbase's background reCAPTCHA-Enterprise solve rate. PAID
-    // plans only — enabling on a free plan makes session creation fail (402),
-    // so default OFF and let upgraded projects opt in.
-    proxies: bool(process.env.BROWSERBASE_PROXIES, false),
-    // "verified" = advanced stealth (real device fingerprint). ENTERPRISE plan
-    // only — fails with 403 elsewhere — so default OFF and opt in when eligible.
-    verified: bool(process.env.BROWSERBASE_VERIFIED, false),
-    // Custom EXTERNAL proxy for the browser session. The point of this is to make
-    // the session egress from the SAME IP that CapSolver solves from (set
-    // CAPSOLVER_PROXY to the same value): reCAPTCHA Enterprise rejects a token
-    // whose solve IP/fingerprint doesn't match the page's, so matching them is
-    // what lets an injected token actually clear IG's challenge.
-    proxyServer: process.env.BROWSERBASE_PROXY_SERVER || "",
-    proxyUsername: process.env.BROWSERBASE_PROXY_USERNAME || "",
-    proxyPassword: process.env.BROWSERBASE_PROXY_PASSWORD || "",
+  // Browser Use — remote stealth browser that Stagehand drives over CDP. We keep
+  // Stagehand as the automation/reasoning layer (its act/extract API is backend-
+  // agnostic) but point it at a Browser Use cloud browser instead of Browserbase.
+  //
+  // PRIMARY path: we explicitly create a session through Browser Use's authenticated
+  // REST API (POST {apiBase}/browsers with X-Browser-Use-API-Key). This is what
+  // makes the API key register as "used" and makes each run show up as a real,
+  // watchable session (liveUrl) in the Browser Use dashboard. Stagehand then attaches
+  // to that session's CDP endpoint (env:"LOCAL" + localBrowserLaunchOptions.cdpUrl).
+  //
+  // FALLBACK path (useRestSessions=false): connect a raw CDP WebSocket straight to
+  // connectHost. This still drives a Browser Use browser, but such sessions do NOT
+  // appear in the dashboard's session list and do NOT update the key's "last used".
+  browserUse: {
+    apiKey: process.env.BROWSER_USE_API_KEY || "",
+    // Browser Use Cloud REST API v3 base. Used to create/stop visible sessions.
+    apiBase: (process.env.BROWSER_USE_API_BASE || "https://api.browser-use.com/api/v3").replace(
+      /\/+$/,
+      ""
+    ),
+    // Create sessions via the REST API (visible in the dashboard, marks key used).
+    // Set to false to fall back to the raw connect-URL (invisible) path.
+    useRestSessions: bool(process.env.BROWSER_USE_REST_SESSIONS, true),
+    // Stagehand still needs an LLM for act()/extract() reasoning. Reuse Gemini.
+    env: process.env.STAGEHAND_ENV || "LOCAL",
+    // Fallback connectable CDP/WebSocket browser endpoint (used only when
+    // useRestSessions is false). Override only if Browser Use changes the host.
+    connectHost: (process.env.BROWSER_USE_CONNECT_HOST || "wss://connect.browser-use.com").replace(
+      /\/+$/,
+      ""
+    ),
+    // Optional residential-proxy country (e.g. "us", "de", "jp"). Blank lets the
+    // REST API apply its default ("us"); on the connect-URL path blank uses
+    // Browser Use's default egress.
+    proxyCountryCode: (process.env.BROWSER_USE_PROXY_COUNTRY || "").trim().toLowerCase(),
+    // Optional saved browser profile UUID. Loads cookies/localStorage so an IG
+    // login can persist across sessions; blank starts from a fresh browser.
+    profileId: process.env.BROWSER_USE_PROFILE_ID || "",
+    // Session timeout in MINUTES (Browser Use caps at 240). Our signup flow can
+    // sit on a CAPTCHA/email step for a while, so default higher than their 15.
+    timeoutMinutes: parseInt(process.env.BROWSER_USE_TIMEOUT_MINUTES || "30", 10),
+    // Record the session so it can be replayed from the dashboard afterwards.
+    // Off by default (small extra cost); handy when debugging "what happened".
+    enableRecording: bool(process.env.BROWSER_USE_RECORDING, false),
+    // Optional FIXED browser viewport (CSS px). Left at 0 (the default), each
+    // session picks a random COMMON desktop resolution so window.screen /
+    // innerWidth / outerWidth don't expose one constant automation viewport —
+    // a uniform viewport is a cheap fingerprint tell, and varying it across the
+    // most-popular real resolutions blends in with normal traffic. Set BOTH to
+    // pin an exact size (e.g. for reproducible debugging).
+    screenWidth: parseInt(process.env.BROWSER_USE_SCREEN_WIDTH || "0", 10) || 0,
+    screenHeight: parseInt(process.env.BROWSER_USE_SCREEN_HEIGHT || "0", 10) || 0,
   },
 
   // Third-party CAPTCHA solver (CapSolver — https://capsolver.com). When an
   // API key is set we solve reCAPTCHA challenges programmatically (sitekey ->
-  // token via API -> inject) as a stronger fallback to Browserbase's plan-gated
-  // background solver. This lets the FREE Browserbase plan clear IG's reCAPTCHA
-  // Enterprise without residential proxies or a human solve. Disabled (and
-  // simply skipped) when no key is present.
+  // token via API -> inject) as a fallback for the CAPTCHAs Browser Use's
+  // in-browser bypass doesn't clear — chiefly IG's reCAPTCHA Enterprise. Disabled
+  // (and simply skipped) when no key is present.
   capsolver: {
     apiKey: process.env.CAPSOLVER_API_KEY || "",
     apiBase: (process.env.CAPSOLVER_API_BASE || "https://api.capsolver.com").replace(/\/+$/, ""),
@@ -97,11 +132,18 @@ export const config = {
     // Proxy CapSolver should solve THROUGH (format: "scheme:host:port:user:pass"
     // or "host:port:user:pass"). reCAPTCHA Enterprise binds the token to the
     // solver's IP/fingerprint, so a proxyless (datacenter-IP) token is rejected
-    // when submitted from the Browserbase session's IP. Set this to the SAME
-    // proxy as BROWSERBASE_PROXY_SERVER so the solve IP matches the page IP — that
-    // is what makes an Enterprise token actually clear the challenge. When empty,
-    // CapSolver solves proxyless (works for non-enterprise, often rejected by IG).
+    // when submitted from the browser's IP. Point this at a residential proxy in
+    // the same region as BROWSER_USE_PROXY_COUNTRY so the solve IP matches the
+    // page IP — that is what makes an Enterprise token actually clear the
+    // challenge. When empty, CapSolver solves proxyless (works for non-enterprise,
+    // often rejected by IG).
     proxy: process.env.CAPSOLVER_PROXY || "",
+    // OCR module for CapSolver's ImageToText task — the purpose-built backup to
+    // the LLM for reading IG's distorted "Confirm you're human" image code.
+    // "common" = general alphanumeric OCR (default, robust); "number" = digits
+    // only (more accurate for IG's numeric codes). See:
+    // https://docs.capsolver.com/guide/recognition/ImageToTextTask/
+    imageToTextModule: (process.env.CAPSOLVER_IMAGE_MODULE || "common").trim(),
   },
 
   verification: {
@@ -207,7 +249,6 @@ export function missingKeys() {
   if (!config.databaseUrl) missing.push("DATABASE_URL");
   if (!config.gemini.apiKey) missing.push("GEMINI_API_KEY");
   if (!config.elevenlabs.apiKey) missing.push("ELEVENLABS_API_KEY");
-  if (!config.browserbase.apiKey) missing.push("BROWSERBASE_API_KEY");
-  if (!config.browserbase.projectId) missing.push("BROWSERBASE_PROJECT_ID");
+  if (!config.browserUse.apiKey) missing.push("BROWSER_USE_API_KEY");
   return missing;
 }

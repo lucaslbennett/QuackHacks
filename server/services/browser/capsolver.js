@@ -1,8 +1,8 @@
 // CapSolver API client (https://capsolver.com) — solves reCAPTCHA challenges
 // programmatically and returns a g-recaptcha-response token we can inject into
-// the page. This is the "always works" counterpart to Browserbase's background
-// solver, which is plan-gated and unreliable for reCAPTCHA Enterprise (what
-// Instagram uses) on the free tier.
+// the page. This is the explicit fallback to Browser Use's in-browser CAPTCHA
+// bypass for the cases it misses — notably reCAPTCHA Enterprise (what Instagram
+// uses), which is the hardest to clear without a matched residential IP.
 //
 // Flow (CapSolver "task" model, proxyless):
 //   1. POST /createTask  -> { taskId }
@@ -79,8 +79,10 @@ function buildReCaptchaTask({
   return task;
 }
 
-// Polls a created task until it resolves to a token or we hit the timeout.
-async function waitForTaskResult(taskId) {
+// Polls a created task until it resolves or we hit the timeout. `extractSolution`
+// pulls the wanted value out of the ready solution object — defaults to the
+// reCAPTCHA token, overridden by ImageToText to read solution.text.
+async function waitForTaskResult(taskId, extractSolution = (s) => s?.gRecaptchaResponse) {
   const { pollIntervalMs, timeoutMs } = config.capsolver;
   const deadline = Date.now() + timeoutMs;
   // Solves rarely finish instantly; give the worker a brief head start.
@@ -88,14 +90,60 @@ async function waitForTaskResult(taskId) {
   while (Date.now() < deadline) {
     const result = await post("/getTaskResult", { taskId });
     if (result.status === "ready") {
-      const token = result.solution?.gRecaptchaResponse;
-      if (!token) throw new Error("CapSolver task ready but solution had no token");
-      return token;
+      const value = extractSolution(result.solution);
+      if (!value) throw new Error("CapSolver task ready but solution was empty");
+      return value;
     }
     // status is "idle" | "processing" — keep polling.
     await sleep(pollIntervalMs);
   }
   throw new Error(`CapSolver task ${taskId} timed out after ${timeoutMs}ms`);
+}
+
+// Solves a classic IMAGE-TO-TEXT captcha (a distorted number/letter image you
+// must read and type) via CapSolver's OCR ImageToText task. This is the service
+// PURPOSE-BUILT for exactly the "Confirm you're human → enter the code from the
+// image" challenge, and our backup when the LLM (Gemini) misreads it.
+//
+// `imageBase64` must be RAW base64 (no "data:" prefix, no newlines). `module`
+// tunes the OCR model ("common" = general alphanumeric, "number" = digits only);
+// `websiteURL` is optional and improves accuracy. ImageToText resolves INLINE on
+// createTask (no polling needed), but we fall back to getTaskResult if the API
+// ever hands back a pending taskId. Returns the recognized text; throws on
+// error/timeout (best-effort callers should wrap in try/catch).
+export async function solveImageToText({ imageBase64, module, websiteURL } = {}) {
+  if (!isConfigured()) throw new Error("CAPSOLVER_API_KEY not set");
+  if (!imageBase64) throw new Error("solveImageToText requires imageBase64");
+
+  const task = { type: "ImageToTextTask" };
+  if (module) task.module = module;
+  // The "number" module reads from the images[] batch field and returns
+  // solution.answers[]; every other module reads a single image from `body` and
+  // returns solution.text. Routing the wrong field 400s, so pick by module.
+  if (module === "number") task.images = [imageBase64];
+  else task.body = imageBase64;
+  if (websiteURL) task.websiteURL = websiteURL;
+
+  // Single image via `body` returns solution.text; the `number` module's batch
+  // (`images`) mode returns solution.answers[] — accept either, first wins.
+  const pick = (solution) =>
+    solution?.text || (Array.isArray(solution?.answers) ? solution.answers[0] : "") || "";
+
+  log.info("Creating ImageToText task", { module: module || "(default)", bodyBytes: imageBase64.length });
+  const created = await post("/createTask", { task });
+
+  if (created.status === "ready") {
+    const text = pick(created.solution);
+    if (!text) throw new Error("CapSolver ImageToText ready but solution had no text");
+    log.info("ImageToText solved", { textLength: text.length });
+    return text;
+  }
+  if (!created.taskId) {
+    throw new Error("CapSolver ImageToText returned neither a solution nor a taskId");
+  }
+  const text = await waitForTaskResult(created.taskId, pick);
+  log.info("ImageToText solved (polled)", { taskId: created.taskId, textLength: text.length });
+  return text;
 }
 
 // Solves a reCAPTCHA and returns the g-recaptcha-response token string.

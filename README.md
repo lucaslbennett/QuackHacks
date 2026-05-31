@@ -6,7 +6,7 @@ account, and let it produce + post commentary-style reels on a randomized schedu
 while reporting its daily views and growth.
 
 Built for the hackathon on **Node.js + Express + Railway**, integrating
-**Google Gemini**, **ElevenLabs**, and **Browserbase Stagehand**.
+**Google Gemini**, **ElevenLabs**, and **Browser Use + Stagehand**.
 
 ## What it does
 
