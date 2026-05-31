@@ -122,7 +122,10 @@ Return JSON with this exact shape:
 
 // Designs a persona + content plan straight from the onboarding chat answers
 // (no scraped sources). Returns a compact shape the onboarding UI renders.
-export async function designOnboardingCharacter({ answers }) {
+export async function designOnboardingCharacter({
+  answers,
+  suggestedLastName,
+}) {
   log.info("Designing onboarding character");
   const system =
     "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
@@ -134,9 +137,41 @@ export async function designOnboardingCharacter({ answers }) {
 Onboarding answers (question -> answer):
 ${JSON.stringify(answers || {}, null, 2)}
 
+How to use the answers (IMPORTANT):
+- The answers describe the TARGET and STRATEGY (who to write for, the niche, the
+  intended vibe). They are NOT copy to reuse.
+- Do NOT quote or repeat the answer wording verbatim anywhere in the output —
+  especially not in "bio", "tagline", "samplePosts", "personality", or hashtags.
+- In particular, NEVER drop demographic/labeling terms from the answers (e.g.
+  "Gen Z", "millennials", "busy professionals", "entrepreneurs", "target
+  audience") into the bio, captions, or posts. Real creators write FOR an
+  audience; they don't announce the audience label in their bio.
+- Instead, EMBODY the vibe and speak naturally to that audience the way a real
+  person would. Example: if the audience is "Gen Z", use the slang, references,
+  and tone Gen Z uses — without ever printing the words "Gen Z".
+- The bio and posts should read like a real human wrote them, not like a brief
+  that lists its own targeting parameters.
+
+Naming rules (IMPORTANT — read carefully):
+- The name must read like a REAL ORDINARY PERSON, not a brand or a username.
+- firstName: a common, real-world first name an actual person would have. If the
+  user already specified a first name in their answers, keep it; otherwise invent one.
+${
+  suggestedLastName
+    ? `- lastName: use "${suggestedLastName}" unless the user explicitly specified a different surname in their answers.`
+    : "- lastName: a real, common surname that a real family would have, drawn from a wide range of real-world origins."
+}
+- The last name MUST NOT be a pun, MUST NOT relate to the niche/topic, and MUST
+  NOT alliterate or rhyme with the first name. Bad: "Stacy Gains" (fitness pun),
+  "Mia Spice" (cooking pun), "Tara Travels". Good: "Stacy Nguyen", "Mia Okafor".
+- The first and last name should feel independent of each other and of the niche,
+  like two names picked at random from a real population.
+
 Return JSON with this exact shape:
 {
-  "displayName": string,            // an inventive, real-sounding creator name
+  "firstName": string,              // a common, real first name (see naming rules)
+  "lastName": string,               // a real, common surname (see naming rules)
+  "displayName": string,            // exactly "{firstName} {lastName}", nothing else
   "tagline": string,                // <= 60 chars, the character in one line
   "handleSuggestions": string[3],   // lowercase instagram handles, no spaces or @
   "niche": string,
@@ -157,7 +192,9 @@ Return JSON with this exact shape:
   "imagePrompt": string             // a single rich prompt describing the character's portrait
 }`;
 
-  return completeJson({ system, prompt, maxTokens: 2000 });
+  // Higher temperature so repeated identical onboarding answers still yield
+  // varied personas rather than collapsing to the same name/character.
+  return completeJson({ system, prompt, maxTokens: 2000, temperature: 1 });
 }
 
 // Generates a commentary-style short-form video script in the persona's voice.
@@ -239,6 +276,10 @@ Constraints for THIS post (use them to stay fresh):
 Rules:
 - The caption must sound human and natural, on-brand for the persona's voice and niche.
 - Do NOT reuse the persona's sample posts verbatim; write something new.
+- Write FOR the persona's audience, but NEVER print audience/demographic labels
+  (e.g. "Gen Z", "millennials", "busy professionals", "entrepreneurs") in the
+  caption or hashtags. Embody the audience's tone instead of naming them. A real
+  person doesn't announce who their target audience is in their own caption.
 - Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
 - Provide a vivid image generation prompt that matches the persona's appearance/aesthetic
   and depicts a concrete, photo-worthy scene for THIS specific post (not just a portrait).

@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS influencers (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Postiz scheduling: map an influencer to a connected Postiz channel. The
+-- platform identifier (instagram | x | tiktok | ...) drives the per-post
+-- settings block. Added after the initial release; null until linked.
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_integration_id TEXT;
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_platform TEXT NOT NULL DEFAULT 'instagram';
+
 CREATE TABLE IF NOT EXISTS source_accounts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   influencer_id UUID NOT NULL REFERENCES influencers(id) ON DELETE CASCADE,
@@ -97,7 +103,7 @@ CREATE TABLE IF NOT EXISTS content_items (
   image_paths   TEXT[],
   video_path    TEXT,
   status        TEXT NOT NULL DEFAULT 'queued',
-  -- queued | scripting | voicing | rendering | ready | posting | posted | failed
+  -- queued | scripting | voicing | rendering | ready | posting | posted | scheduling | scheduled | failed
   error         TEXT,
   meta          JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -113,6 +119,12 @@ CREATE TABLE IF NOT EXISTS posts (
   caption       TEXT,
   posted_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Postiz scheduling: track the Postiz post id + scheduled time for posts that
+-- were scheduled through Postiz rather than published directly via Stagehand.
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS postiz_post_id TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS platform TEXT;
 
 CREATE TABLE IF NOT EXISTS metrics_daily (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -131,7 +143,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   influencer_id UUID REFERENCES influencers(id) ON DELETE CASCADE,
   type          TEXT NOT NULL,
-  -- clone_persona | spawn_account | generate_content | post_content | scrape_metrics
+  -- clone_persona | spawn_account | generate_content | post_content | schedule_postiz | scrape_metrics
   payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
   status        TEXT NOT NULL DEFAULT 'pending',
   -- pending | running | done | failed

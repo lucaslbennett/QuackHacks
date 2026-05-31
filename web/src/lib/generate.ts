@@ -30,6 +30,8 @@ interface GenerateResponse {
 
 // The full character the onboarding chat designs (persona + content plan).
 export interface Character {
+  firstName: string;
+  lastName: string;
   displayName: string;
   tagline: string;
   handleSuggestions: string[];

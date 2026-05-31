@@ -6,6 +6,7 @@ import * as eleven from "../services/elevenlabs.js";
 import * as fal from "../services/fal.js";
 import * as stagehand from "../services/browser/stagehand.js";
 import * as capsolver from "../services/browser/capsolver.js";
+import * as postiz from "../services/postiz.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { pool } from "../db/pool.js";
 import { submitManualCode, generateEmail } from "../services/verification.js";
@@ -32,6 +33,7 @@ router.get("/status", async (req, res) => {
       fal: fal.isConfigured(),
       browserbase: stagehand.isConfigured(),
       capsolver: capsolver.isConfigured(),
+      postiz: postiz.isConfigured(),
     },
     missingKeys: missingKeys(),
     verification: {

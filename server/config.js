@@ -99,14 +99,39 @@ export const config = {
     twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
   },
 
+  // Postiz — social-media scheduling. Used to schedule influencer posts to the
+  // connected channels (Instagram, X, TikTok, ...) instead of (or alongside)
+  // the Stagehand IG poster. Cloud base URL by default; point at a self-hosted
+  // instance via POSTIZ_API_BASE (e.g. https://your-host/public/v1).
+  postiz: {
+    apiKey: process.env.POSTIZ_API_KEY || "",
+    apiBase: (process.env.POSTIZ_API_BASE || "https://api.postiz.com/public/v1").replace(
+      /\/+$/,
+      ""
+    ),
+    // Default post type for scheduled posts: "schedule" | "now" | "draft".
+    defaultType: process.env.POSTIZ_DEFAULT_TYPE || "schedule",
+  },
+
   scheduler: {
     enabled: bool(process.env.SCHEDULER_ENABLED, true),
     // How often the job runner polls the jobs table (seconds).
     pollSeconds: parseInt(process.env.SCHEDULER_POLL_SECONDS || "20", 10),
+    // When true the daily planner schedules posts through Postiz instead of
+    // the Stagehand IG poster.
+    usePostiz: bool(process.env.SCHEDULER_USE_POSTIZ, false),
   },
 
   // Where generated media (audio/video/images) gets written.
   mediaDir: process.env.MEDIA_DIR || "media",
+
+  // Public base URL where this server is reachable (e.g. the Railway domain).
+  // Needed so external services like Postiz can fetch our generated /media
+  // files. On Railway the public domain is exposed as RAILWAY_PUBLIC_DOMAIN.
+  publicBaseUrl: (
+    process.env.PUBLIC_BASE_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+  ).replace(/\/+$/, ""),
 };
 
 export function missingKeys() {

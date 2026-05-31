@@ -52,13 +52,28 @@ cp .env.example .env   # fill in keys + a local DATABASE_URL
 # 3. Migrate the schema
 npm run migrate
 
-# 4. Run API (port 3000) and the web dev server (port 5173, proxies /api)
+# 4. Run the API and the web dev server in TWO SEPARATE terminals:
+#    Terminal 1 — backend API (port 3000)
 npm run dev
+#    Terminal 2 — web dev server (port 5173, proxies /api)
 npm run web:dev
 ```
 
 Open http://localhost:5173. The app degrades gracefully: `/api/status` shows which
 integrations are configured, and unconfigured services simply error on use.
+
+### Reloading while you work
+
+- **Frontend (`web/src/**`)** hot-reloads automatically via Vite — no restart needed.
+- **Backend (`server/**`)** does not auto-reload. After editing a server file
+  (prompts, routes, services), restart it: **Ctrl+C in the backend terminal, then
+  run `npm run dev` again.** `npm run dev` first frees port 3000 (via
+  `server/scripts/freePort.js`) so re-running it always works cleanly and never
+  hits `EADDRINUSE`, even if a previous server is still lingering.
+
+> Note: `node --watch` is intentionally not used here — it crashes with
+> `EMFILE: too many open files` in some local environments. `npm run dev` uses
+> plain `node` plus the port-free step instead.
 
 ## Deploy to Railway
 
@@ -74,8 +89,30 @@ integrations are configured, and unconfigured services simply error on use.
 - `GET  /api/status` – integration health
 - `POST /api/influencers` – create from the onboarding wizard
 - `GET  /api/influencers/:id` – full state (persona, content, posts, metrics, jobs)
-- `POST /api/influencers/:id/actions/:action` – `clone | spawn | generate | post | metrics`
+- `POST /api/influencers/:id/actions/:action` – `clone | spawn | generate | post | schedule | metrics`
+- `POST /api/influencers/:id/postiz` – link the influencer to a Postiz channel (`{ integrationId, platform }`)
+- `GET  /api/postiz/status` – verify the Postiz API key is connected
+- `GET  /api/postiz/integrations` – list connected Postiz channels (id + platform)
 - `POST /api/verification/:id/:kind` – submit a manual `email` / `sms` code
+
+## Posting via Postiz
+
+Posts can be scheduled through [Postiz](https://docs.postiz.com/public-api/introduction)
+instead of (or alongside) the Stagehand IG poster.
+
+1. Set `POSTIZ_API_KEY` (Settings → Developers → Public API). Optionally
+   `POSTIZ_API_BASE` for a self-hosted instance.
+2. Set `PUBLIC_BASE_URL` (or rely on Railway's `RAILWAY_PUBLIC_DOMAIN`) so Postiz
+   can fetch the rendered `/media` reel.
+3. List channels with `GET /api/postiz/integrations`, then link one to an
+   influencer: `POST /api/influencers/:id/postiz` with
+   `{ "integrationId": "<id>", "platform": "<identifier>" }` (use the channel's
+   `identifier`, e.g. `instagram-standalone`).
+4. Schedule a ready reel on demand:
+   `POST /api/influencers/:id/actions/schedule` (optional body:
+   `{ contentId, runAt, type }` where `type` is `schedule | now | draft`).
+5. To make the daily planner route posts through Postiz automatically for linked
+   influencers, set `SCHEDULER_USE_POSTIZ=true`.
 
 ## Notes & responsible use
 

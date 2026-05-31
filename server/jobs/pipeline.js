@@ -7,9 +7,10 @@ import { scrapeInstagramProfile } from "../services/browser/scrapeProfile.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { postReel } from "../services/browser/postReel.js";
 import { scrapeAccountMetrics } from "../services/browser/scrapeMetrics.js";
+import * as postiz from "../services/postiz.js";
 import { generateEmail } from "../services/verification.js";
 import { encryptSecret, decryptSecret } from "../lib/crypto.js";
-import { mediaUrl } from "../lib/util.js";
+import { mediaUrl, publicMediaUrl } from "../lib/util.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("pipeline");
@@ -218,6 +219,72 @@ export async function postContent({ influencerId, contentId }) {
   return { posted: false };
 }
 
+// 4b. Schedule via Postiz: upload a ready reel to Postiz and schedule it on the
+// influencer's linked channel. Used as an alternative to the Stagehand poster
+// so posting cadence is managed by Postiz. If no contentId is given, picks the
+// oldest rendered-but-unposted item (same selection as postContent).
+export async function scheduleViaPostiz({ influencerId, contentId, runAt, type }) {
+  if (!postiz.isConfigured()) throw new Error("POSTIZ_API_KEY not configured");
+
+  const influencer = await repo.influencers.get(influencerId);
+  if (!influencer) throw new Error("influencer not found");
+  if (!influencer.postiz_integration_id) {
+    throw new Error("influencer has no linked Postiz channel (postiz_integration_id)");
+  }
+
+  let item;
+  if (contentId) {
+    item = await repo.content.get(contentId);
+  } else {
+    const items = await repo.content.listFor(influencerId);
+    item = items.filter((c) => c.status === "ready" && c.video_path).pop();
+  }
+  if (!item || !item.video_path) throw new Error("content not ready to schedule");
+  contentId = item.id;
+
+  // Postiz needs a publicly reachable URL to ingest the media.
+  const mediaPublicUrl = publicMediaUrl(item.video_path);
+  if (!mediaPublicUrl || mediaPublicUrl.startsWith("/")) {
+    throw new Error("PUBLIC_BASE_URL not set - Postiz cannot fetch local media");
+  }
+
+  const platform = influencer.postiz_platform || "instagram";
+  const hashtags = (item.hashtags || []).map((h) => (h.startsWith("#") ? h : `#${h}`));
+  const caption = [item.caption, hashtags.join(" ")].filter(Boolean).join("\n\n");
+
+  await repo.content.update(contentId, { status: "scheduling" });
+
+  const media = await postiz.uploadFromUrl(mediaPublicUrl);
+
+  // Default to the channel's next free slot when no explicit time is given.
+  let date = runAt ? new Date(runAt) : null;
+  if (!date) {
+    const slot = await postiz.findNextSlot(influencer.postiz_integration_id);
+    date = slot ? new Date(slot) : new Date(Date.now() + 60 * 60 * 1000);
+  }
+
+  const { postId } = await postiz.schedulePost({
+    integrationId: influencer.postiz_integration_id,
+    identifier: platform,
+    content: caption,
+    date,
+    media: [media],
+    type: type || undefined,
+  });
+
+  const post = await repo.posts.createScheduled({
+    influencerId,
+    contentId,
+    postizPostId: postId,
+    caption: item.caption,
+    platform,
+    scheduledAt: date,
+  });
+
+  await repo.content.update(contentId, { status: "scheduled" });
+  return { scheduled: true, postId, postRowId: post.id, scheduledAt: date.toISOString() };
+}
+
 // 5. Metrics: scrape views/likes/comments for the influencer's posts.
 export async function scrapeMetrics({ influencerId }) {
   const account = await repo.igAccounts.forInfluencer(influencerId);
@@ -252,5 +319,6 @@ export const handlers = {
   spawn_account: spawnAccount,
   generate_content: generateContent,
   post_content: postContent,
+  schedule_postiz: scheduleViaPostiz,
   scrape_metrics: scrapeMetrics,
 };

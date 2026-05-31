@@ -130,6 +130,10 @@ export default function Onboarding({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
     "idle",
   );
+  // Inline editing of the influencer's first/last name on the reveal screen.
+  const [editingName, setEditingName] = useState(false);
+  const [firstNameDraft, setFirstNameDraft] = useState("");
+  const [lastNameDraft, setLastNameDraft] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -205,15 +209,18 @@ export default function Onboarding({
     }
   }
 
-  // Persist the generated influencer. Returns true on success.
-  async function persist() {
-    if (!imageUrl || !character) return false;
+  // Persist the generated influencer. Returns true on success. Accepts an
+  // explicit character so callers (e.g. saving a name edit) can persist updated
+  // data without waiting for the async state update to flush.
+  async function persist(toSave?: Character) {
+    const subject = toSave ?? character;
+    if (!imageUrl || !subject) return false;
     setSaveState("saving");
     try {
       await saveGeneration(
-        character.imagePrompt || character.displayName,
+        subject.imagePrompt || subject.displayName,
         imageUrl,
-        character,
+        subject,
       );
       setSaveState("saved");
       return true;
@@ -221,6 +228,37 @@ export default function Onboarding({
       setSaveState("idle");
       return false;
     }
+  }
+
+  function startEditName() {
+    if (!character) return;
+    setFirstNameDraft(character.firstName ?? "");
+    setLastNameDraft(character.lastName ?? "");
+    setEditingName(true);
+  }
+
+  function cancelEditName() {
+    setEditingName(false);
+  }
+
+  // Applies the edited first/last name to the character, keeping displayName in
+  // sync, and re-persists if the influencer was already saved.
+  function saveEditName() {
+    if (!character) return;
+    const first = firstNameDraft.trim();
+    const last = lastNameDraft.trim();
+    if (!first && !last) return;
+    const displayName = [first, last].filter(Boolean).join(" ");
+    const updated: Character = {
+      ...character,
+      firstName: first,
+      lastName: last,
+      displayName,
+    };
+    setCharacter(updated);
+    setEditingName(false);
+    // If we've already saved (auto-save on reveal), push the rename through.
+    if (user && saveState === "saved") persist(updated);
   }
 
   // Auto-save as soon as the influencer is generated, so it's kept even if the
@@ -378,12 +416,71 @@ export default function Onboarding({
               />
             </div>
 
-            <h2
-              className="text-[28px] leading-tight sm:text-[36px]"
-              style={{ fontFamily: "var(--font-heading)" }}
-            >
-              {character.displayName}
-            </h2>
+            {editingName ? (
+              <div className="flex w-full max-w-sm flex-col items-center gap-2">
+                <div className="flex w-full gap-2">
+                  <input
+                    type="text"
+                    value={firstNameDraft}
+                    onChange={(e) => setFirstNameDraft(e.target.value)}
+                    placeholder="First name"
+                    aria-label="First name"
+                    className="min-w-0 flex-1 rounded-xl border border-black/15 px-3 py-2 text-center text-[16px] text-black outline-none focus:border-black/40"
+                  />
+                  <input
+                    type="text"
+                    value={lastNameDraft}
+                    onChange={(e) => setLastNameDraft(e.target.value)}
+                    placeholder="Last name"
+                    aria-label="Last name"
+                    className="min-w-0 flex-1 rounded-xl border border-black/15 px-3 py-2 text-center text-[16px] text-black outline-none focus:border-black/40"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={cancelEditName}
+                    className="rounded-full border border-black/20 px-4 py-1.5 text-[13px] transition-colors duration-200 hover:bg-black/[0.04]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveEditName}
+                    disabled={!firstNameDraft.trim() && !lastNameDraft.trim()}
+                    className="rounded-full bg-black px-4 py-1.5 text-[13px] font-medium text-white transition-opacity duration-200 hover:opacity-80 disabled:opacity-30"
+                  >
+                    Save name
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2">
+                <h2
+                  className="text-[28px] leading-tight sm:text-[36px]"
+                  style={{ fontFamily: "var(--font-heading)" }}
+                >
+                  {character.displayName}
+                </h2>
+                <button
+                  type="button"
+                  onClick={startEditName}
+                  aria-label="Edit name"
+                  title="Edit name"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/40 transition-colors duration-200 hover:bg-black/[0.06] hover:text-black"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3z"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
             {character.tagline && (
               <p className="mt-1 text-[15px] text-black/50">{character.tagline}</p>
             )}

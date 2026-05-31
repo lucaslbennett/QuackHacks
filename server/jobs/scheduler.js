@@ -19,6 +19,9 @@ export async function planDailyContent() {
   for (const inf of active) {
     const count = Math.max(1, inf.posts_per_day || 2);
     const times = randomizedPostTimes(count);
+    // Route through Postiz when enabled and the influencer is linked to a
+    // channel; otherwise fall back to the direct Stagehand IG poster.
+    const viaPostiz = config.scheduler.usePostiz && Boolean(inf.postiz_integration_id);
     for (const t of times) {
       // Render ~20 min before publish; if that's in the past, render now.
       const renderAt = new Date(Math.max(Date.now(), t.getTime() - 20 * 60 * 1000));
@@ -27,12 +30,22 @@ export async function planDailyContent() {
         type: "generate_content",
         runAt: renderAt,
       });
-      // Posts the oldest ready-but-unposted reel at the randomized time.
-      await repo.jobs.enqueue({
-        influencerId: inf.id,
-        type: "post_content",
-        runAt: t,
-      });
+      if (viaPostiz) {
+        // Hand the rendered reel to Postiz to publish at the randomized time.
+        await repo.jobs.enqueue({
+          influencerId: inf.id,
+          type: "schedule_postiz",
+          payload: { runAt: t.toISOString() },
+          runAt: renderAt,
+        });
+      } else {
+        // Posts the oldest ready-but-unposted reel at the randomized time.
+        await repo.jobs.enqueue({
+          influencerId: inf.id,
+          type: "post_content",
+          runAt: t,
+        });
+      }
     }
   }
 }
@@ -69,7 +82,11 @@ export function startScheduler() {
     })
   );
 
-  log.info("Scheduler started (daily content @ 08:05, metrics every 6h)");
+  log.info(
+    `Scheduler started (daily content @ 08:05, metrics every 6h, posting via ${
+      config.scheduler.usePostiz ? "Postiz" : "Stagehand"
+    })`
+  );
 }
 
 export function stopScheduler() {

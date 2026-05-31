@@ -3,6 +3,7 @@ import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
 import * as fal from "../services/fal.js";
 import { requireAuth } from "../lib/auth.js";
+import { pick, FIRST_NAMES, LAST_NAMES } from "../lib/util.js";
 
 const router = Router();
 
@@ -33,14 +34,22 @@ function buildCharacterFromAnswers(answers) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "")
     .slice(0, 12) || "creator";
-  const displayName = `${niche.replace(/(^|\s)\S/g, (s) => s.toUpperCase())} Creator`;
+  const firstName = pick(FIRST_NAMES);
+  const lastName = pick(LAST_NAMES);
+  const displayName = `${firstName} ${lastName}`;
   const lookClause =
     look && !/you decide/i.test(look) ? look : "natural, approachable, modern";
 
   return {
+    firstName,
+    lastName,
     displayName,
     tagline: `${vibe} ${niche} content for ${audience}`.slice(0, 60),
-    handleSuggestions: [`${slug}.daily`, `the.${slug}`, `${slug}hq`],
+    handleSuggestions: (() => {
+      const f = firstName.toLowerCase();
+      const l = lastName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      return [`${f}.${l}`, `${f}${l}`, `${f}.${slug}`];
+    })(),
     niche,
     bio: `${niche} for ${audience} ✨ ${vibe}`.slice(0, 150),
     personality: `A ${vibe} creator who lives and breathes ${niche}. They speak directly to ${audience} and keep things real.`,
@@ -115,8 +124,13 @@ router.post(
         .json({ ok: false, error: "character generation is not configured" });
     }
 
+    // Per-request randomness so repeated identical answers (e.g. always asking
+    // for "Stacy") don't collapse to the same surname. The surname is picked
+    // from a real list and suggested to the model.
+    const suggestedLastName = pick(LAST_NAMES);
+
     const character = gemini.isConfigured()
-      ? await gemini.designOnboardingCharacter({ answers })
+      ? await gemini.designOnboardingCharacter({ answers, suggestedLastName })
       : buildCharacterFromAnswers(answers);
 
     const imagePrompt =

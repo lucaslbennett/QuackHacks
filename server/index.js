@@ -14,6 +14,7 @@ import systemRoutes from "./routes/system.js";
 import influencerRoutes from "./routes/influencers.js";
 import authRoutes from "./routes/auth.js";
 import generateRoutes from "./routes/generate.js";
+import postizRoutes from "./routes/postiz.js";
 
 const log = createLogger("server");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +35,7 @@ app.use("/api", systemRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/generate", generateRoutes);
 app.use("/api/influencers", influencerRoutes);
+app.use("/api/postiz", postizRoutes);
 
 // Serve the built dashboard if present; otherwise a minimal landing page.
 const webDist = path.join(rootDir, "web", "dist");

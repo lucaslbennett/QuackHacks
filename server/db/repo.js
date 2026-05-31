@@ -143,6 +143,20 @@ export const posts = {
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [influencerId, contentId || null, url || null, shortcode || null, caption || null]
     ),
+  // Records a post that was scheduled through Postiz (not yet published).
+  createScheduled: ({ influencerId, contentId, postizPostId, caption, platform, scheduledAt }) =>
+    one(
+      `INSERT INTO posts (influencer_id, content_id, postiz_post_id, caption, platform, scheduled_at)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        influencerId,
+        contentId || null,
+        postizPostId || null,
+        caption || null,
+        platform || null,
+        scheduledAt || null,
+      ]
+    ),
   listFor: (influencerId) =>
     many(`SELECT * FROM posts WHERE influencer_id=$1 ORDER BY posted_at DESC`, [influencerId]),
 };

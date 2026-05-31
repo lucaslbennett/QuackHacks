@@ -83,7 +83,16 @@ router.get(
 router.patch(
   "/:id",
   asyncH(async (req, res) => {
-    const allowed = ["name", "niche", "handle", "posts_per_day", "status", "voice_id"];
+    const allowed = [
+      "name",
+      "niche",
+      "handle",
+      "posts_per_day",
+      "status",
+      "voice_id",
+      "postiz_integration_id",
+      "postiz_platform",
+    ];
     const fields = {};
     for (const k of allowed) if (k in req.body) fields[k] = req.body[k];
     const influencer = await repo.influencers.update(req.params.id, fields);
@@ -122,11 +131,37 @@ router.post(
   })
 );
 
+// Link this influencer to a connected Postiz channel so its posts can be
+// scheduled through Postiz. `platform` (instagram | x | tiktok | ...) drives the
+// per-post settings; defaults to instagram.
+router.post(
+  "/:id/postiz",
+  asyncH(async (req, res) => {
+    const { integrationId, platform } = req.body;
+    if (!integrationId) {
+      return res.status(400).json({ ok: false, error: "integrationId is required" });
+    }
+    const influencer = await repo.influencers.update(req.params.id, {
+      postiz_integration_id: integrationId,
+      postiz_platform: platform || "instagram",
+    });
+    res.json({
+      ok: true,
+      influencer: {
+        id: influencer.id,
+        postiz_integration_id: influencer.postiz_integration_id,
+        postiz_platform: influencer.postiz_platform,
+      },
+    });
+  })
+);
+
 const ACTIONS = {
   clone: "clone_persona",
   spawn: "spawn_account",
   generate: "generate_content",
   post: "post_content",
+  schedule: "schedule_postiz",
   metrics: "scrape_metrics",
 };
 
@@ -139,7 +174,15 @@ router.post(
     const payload = {};
     if (req.params.action === "generate" && req.body.topic) payload.topic = req.body.topic;
     if (req.params.action === "post" && req.body.contentId) payload.contentId = req.body.contentId;
-    const job = await repo.jobs.enqueue({ influencerId: req.params.id, type, payload });
+    if (req.params.action === "schedule") {
+      if (req.body.contentId) payload.contentId = req.body.contentId;
+      if (req.body.runAt) payload.runAt = req.body.runAt;
+      if (req.body.type) payload.type = req.body.type;
+    }
+    // Honour an explicit runAt for scheduled posts so the generate-then-post
+    // flow can stage the job ahead of time.
+    const runAt = req.params.action === "schedule" && req.body.runAt ? new Date(req.body.runAt) : undefined;
+    const job = await repo.jobs.enqueue({ influencerId: req.params.id, type, payload, runAt });
     res.status(202).json({ ok: true, job });
   })
 );

@@ -8,6 +8,24 @@ export const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1
 
 export const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Real, common first names and surnames spanning a range of origins. Sampled
+// independently so a generated influencer's name feels like a real person
+// rather than a niche pun. Shared by the no-LLM fallback and by the LLM path,
+// which is fed a randomly-picked surname so repeated identical inputs don't
+// collapse to the same name.
+export const FIRST_NAMES = [
+  "Maya", "Liam", "Sofia", "Noah", "Aaliyah", "Ethan", "Chloe", "Mateo",
+  "Priya", "Lucas", "Amara", "Daniel", "Hana", "Caleb", "Isabella", "Omar",
+  "Zoe", "Kai", "Leila", "Marcus", "Nina", "Diego", "Grace", "Ravi",
+  "Elena", "Jonah", "Yuki", "Adaeze", "Stella", "Theo",
+];
+export const LAST_NAMES = [
+  "Nguyen", "Okafor", "Castellanos", "Petrov", "Andersen", "Cohen", "Yamamoto",
+  "Reyes", "Kowalski", "Mbeki", "Singh", "Rossi", "Adebayo", "Park", "Haddad",
+  "Fernandez", "O'Brien", "Schneider", "Ivanova", "Tanaka", "Mensah", "Lindqvist",
+  "Delgado", "Bauer", "Khan", "Moreau", "Costa", "Abdi", "Walsh", "Sato",
+];
+
 // Wraps a per-influencer description in a fixed style frame so every portrait
 // reads like a casual, real-person selfie rather than a polished studio shot.
 // Shared by both image backends (fal Nano Banana + Gemini) so the look stays
@@ -45,6 +63,14 @@ export function mediaUrl(absPath) {
   if (!absPath) return null;
   const rel = path.relative(path.resolve(config.mediaDir), absPath);
   return `/media/${rel.split(path.sep).join("/")}`;
+}
+
+// Like mediaUrl but absolute, so external services (e.g. Postiz) can fetch it.
+// Falls back to the relative path when no public base URL is configured.
+export function publicMediaUrl(absPath) {
+  const rel = mediaUrl(absPath);
+  if (!rel) return null;
+  return config.publicBaseUrl ? `${config.publicBaseUrl}${rel}` : rel;
 }
 
 // Spreads N posts across the active hours of a day with jitter so cadence
