@@ -115,6 +115,45 @@ export async function linkPostizChannel(
   };
 }
 
+// Auth required: update the influencer's Instagram @handle (display username).
+// The leading "@" is stripped so storage stays consistent. Returns the updated
+// influencer.
+export async function updateInfluencerHandle(
+  influencerId: string,
+  handle: string,
+): Promise<Influencer> {
+  const clean = handle.trim().replace(/^@+/, "");
+  const res = await fetch(`/api/influencers/${influencerId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ handle: clean || null }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Failed to update username (${res.status})`);
+  }
+  return data.influencer as Influencer;
+}
+
+// Auth required: unlink an influencer from its Postiz channel so it no longer
+// publishes to that account. Returns the cleared link fields.
+export async function unlinkPostizChannel(
+  influencerId: string,
+): Promise<{ postiz_integration_id: string | null; postiz_platform: string | null }> {
+  const res = await fetch(`/api/influencers/${influencerId}/postiz`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to unlink channel (${res.status})`);
+  }
+  return {
+    postiz_integration_id: data.influencer?.postiz_integration_id ?? null,
+    postiz_platform: data.influencer?.postiz_platform ?? null,
+  };
+}
+
 // Auth required: full detail for one influencer (account, content, metrics).
 export async function getInfluencer(id: string): Promise<InfluencerDetail> {
   const res = await fetch(`/api/influencers/${id}`, { headers: authHeaders() });

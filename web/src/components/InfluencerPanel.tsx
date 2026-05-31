@@ -3,6 +3,8 @@ import { publishViaPostiz, type PublishedPost } from "../lib/generate";
 import {
   getInfluencer,
   linkPostizChannel,
+  unlinkPostizChannel,
+  updateInfluencerHandle,
   type Influencer,
   type ContentItem,
   type InfluencerAccount,
@@ -63,6 +65,10 @@ export default function InfluencerPanel({
   const [content, setContent] = useState<ContentItem[]>([]);
   const [tab, setTab] = useState<Tab>("content");
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Connected Postiz channels, fetched once at the panel level so both the
+  // header link bar and the Account tab can resolve the linked account's handle.
+  const [channels, setChannels] = useState<PostizChannel[]>([]);
+  const [unlinking, setUnlinking] = useState(false);
 
   const persona = influencer.persona || {};
   const name = persona.displayName || influencer.name;
@@ -84,6 +90,49 @@ export default function InfluencerPanel({
       active = false;
     };
   }, [initial.id]);
+
+  // Load connected channels (best-effort) so we can show the linked account's
+  // handle/avatar in the persistent header bar.
+  const loadChannels = () => {
+    listPostizChannels()
+      .then(setChannels)
+      .catch(() => setChannels([]));
+  };
+  useEffect(() => {
+    loadChannels();
+  }, []);
+
+  // Applied when a channel is linked/changed (from the Account tab or the bar).
+  const applyLink = (link: {
+    postiz_integration_id: string | null;
+    postiz_platform: string | null;
+  }) => {
+    setInfluencer((inf) => ({
+      ...inf,
+      postiz_integration_id: link.postiz_integration_id,
+      postiz_platform: link.postiz_platform,
+    }));
+  };
+
+  // Remove the currently linked account.
+  const handleUnlink = async () => {
+    setUnlinking(true);
+    setLoadErr(null);
+    try {
+      const link = await unlinkPostizChannel(influencer.id);
+      applyLink(link);
+    } catch (e) {
+      setLoadErr(
+        e instanceof Error ? e.message : "Couldn't remove the linked account.",
+      );
+    } finally {
+      setUnlinking(false);
+    }
+  };
+
+  const linkedChannel = channels.find(
+    (c) => c.id === influencer.postiz_integration_id,
+  );
 
   return (
     <div>
@@ -113,7 +162,16 @@ export default function InfluencerPanel({
             </h1>
             <StatusBadge status={influencer.status} />
           </div>
-          {handle && <p className="mt-1 text-[15px] text-[#5b73d6]">@{handle}</p>}
+          <p className="mt-1">
+            <EditableHandle
+              influencerId={influencer.id}
+              value={influencer.handle || handle || null}
+              onSaved={(h) =>
+                setInfluencer((inf) => ({ ...inf, handle: h || null }))
+              }
+              size="lg"
+            />
+          </p>
           {niche && (
             <p className="mt-1 text-[14px] capitalize text-black/50">{niche}</p>
           )}
@@ -124,6 +182,68 @@ export default function InfluencerPanel({
           )}
         </div>
       </section>
+
+      {/* Persistent linked-account bar — link, change, or remove the account
+          this influencer posts to, from any tab. */}
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-black/10 bg-black/[0.02] px-4 py-3">
+        {influencer.postiz_integration_id ? (
+          <>
+            {linkedChannel?.picture ? (
+              <img
+                src={linkedChannel.picture}
+                alt=""
+                className="h-8 w-8 rounded-full object-cover"
+              />
+            ) : (
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/15 text-[13px] text-emerald-700">
+                ✓
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="text-[12px] text-black/40">Linked account</p>
+              <p className="truncate text-[14px] font-medium">
+                @{linkedChannel?.profile || linkedChannel?.name || "Instagram"}
+              </p>
+            </div>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTab("account")}
+                className="rounded-full border border-black/15 px-4 py-1.5 text-[13px] font-medium transition hover:bg-black/5"
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                onClick={handleUnlink}
+                disabled={unlinking}
+                className="rounded-full border border-red-200 px-4 py-1.5 text-[13px] font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+              >
+                {unlinking ? "Removing…" : "Remove"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/5 text-[15px] text-black/30">
+              ⊕
+            </span>
+            <div className="min-w-0">
+              <p className="text-[12px] text-black/40">No account linked</p>
+              <p className="text-[14px] font-medium">
+                Link an Instagram account to publish
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTab("account")}
+              className="ml-auto rounded-full bg-black px-4 py-1.5 text-[13px] font-medium text-white transition hover:opacity-80"
+            >
+              Link Instagram
+            </button>
+          </>
+        )}
+      </div>
 
       {loadErr && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
@@ -164,19 +284,21 @@ export default function InfluencerPanel({
           onPosted={(item) => setContent((c) => [item, ...c])}
           onConnectAccount={() => setTab("account")}
           onViewAnalytics={() => setTab("analytics")}
+          onHandleSaved={(h) =>
+            setInfluencer((inf) => ({ ...inf, handle: h || null }))
+          }
         />
       )}
       {tab === "account" && (
         <AccountTab
           account={account}
           influencer={influencer}
-          onLinked={(link) =>
-            setInfluencer((inf) => ({
-              ...inf,
-              postiz_integration_id: link.postiz_integration_id,
-              postiz_platform: link.postiz_platform,
-            }))
-          }
+          onLinked={(link) => {
+            applyLink(link);
+            // Refresh panel-level channels so the header bar can resolve the
+            // newly linked account's handle/avatar.
+            loadChannels();
+          }}
         />
       )}
       {tab === "analytics" && (
@@ -202,6 +324,108 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/* ---------------- Editable Instagram @handle ---------------- */
+
+// Inline-editable @handle. Click "Edit" to turn it into a text field; Enter or
+// the check saves, Escape cancels. Persists via PATCH and reports the new value
+// up so every place that shows the handle updates at once. `size` tunes the
+// typography for the big header vs smaller inline placements.
+function EditableHandle({
+  influencerId,
+  value,
+  onSaved,
+  size = "sm",
+}: {
+  influencerId: string;
+  value: string | null;
+  onSaved: (handle: string) => void;
+  size?: "lg" | "sm";
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const textCls = size === "lg" ? "text-[15px]" : "text-[13px]";
+
+  const start = () => {
+    setDraft(value || "");
+    setError(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const clean = draft.trim().replace(/^@+/, "");
+    if (clean === (value || "")) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateInfluencerHandle(influencerId, clean);
+      onSaved(updated.handle || "");
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save username.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className={`${textCls} text-[#5b73d6]`}>@</span>
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          disabled={saving}
+          placeholder="username"
+          className={`${textCls} w-40 rounded-md border border-black/15 bg-white px-2 py-0.5 text-black outline-none focus:border-[#5b73d6]`}
+        />
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving}
+          className="rounded-md bg-[#5b73d6] px-2 py-0.5 text-[12px] font-medium text-white transition hover:bg-[#4a61c2] disabled:opacity-50"
+        >
+          {saving ? "…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          disabled={saving}
+          className="text-[12px] text-black/40 hover:text-black"
+        >
+          Cancel
+        </button>
+        {error && <span className="text-[12px] text-red-600">{error}</span>}
+      </span>
+    );
+  }
+
+  return (
+    <span className="group inline-flex items-center gap-1.5">
+      <span className={`${textCls} text-[#5b73d6]`}>
+        {value ? `@${value}` : "Set a username"}
+      </span>
+      <button
+        type="button"
+        onClick={start}
+        className="text-[12px] text-black/40 underline-offset-2 transition hover:text-black hover:underline"
+      >
+        Edit
+      </button>
+    </span>
+  );
+}
+
 /* ---------------- Content & posting ---------------- */
 
 function ContentTab({
@@ -210,12 +434,14 @@ function ContentTab({
   onPosted,
   onConnectAccount,
   onViewAnalytics,
+  onHandleSaved,
 }: {
   influencer: Influencer;
   content: ContentItem[];
   onPosted: (item: ContentItem) => void;
   onConnectAccount: () => void;
   onViewAnalytics: () => void;
+  onHandleSaved: (handle: string) => void;
 }) {
   const [post, setPost] = useState<PublishedPost | null>(null);
   const [loading, setLoading] = useState(false);
@@ -254,7 +480,7 @@ function ContentTab({
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
         <h2
           className="text-[22px] sm:text-[26px]"
           style={{ fontFamily: "var(--font-heading)" }}
@@ -277,6 +503,14 @@ function ContentTab({
               ? "Generate & publish another"
               : "Generate post"}
         </button>
+      </div>
+      <div className="mb-4 flex items-center gap-2 text-[13px] text-black/50">
+        <span>Posting as</span>
+        <EditableHandle
+          influencerId={influencer.id}
+          value={influencer.handle || null}
+          onSaved={onHandleSaved}
+        />
       </div>
 
       {error && (

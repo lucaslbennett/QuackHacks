@@ -295,7 +295,10 @@ router.get(
 
 router.patch(
   "/:id",
+  requireAuth,
   asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
     const allowed = [
       "name",
       "niche",
@@ -360,6 +363,28 @@ router.post(
     const influencer = await repo.influencers.update(req.params.id, {
       postiz_integration_id: integrationId,
       postiz_platform: platform || "instagram",
+    });
+    res.json({
+      ok: true,
+      influencer: {
+        id: influencer.id,
+        postiz_integration_id: influencer.postiz_integration_id,
+        postiz_platform: influencer.postiz_platform,
+      },
+    });
+  })
+);
+
+// Unlink this influencer from its Postiz channel (clears postiz_integration_id).
+// The platform default is left as-is so re-linking later is a single step.
+router.delete(
+  "/:id/postiz",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
+    const influencer = await repo.influencers.update(req.params.id, {
+      postiz_integration_id: null,
     });
     res.json({
       ok: true,
