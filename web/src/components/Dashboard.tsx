@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/authContext";
-import { listMyInfluencers, type Influencer } from "../lib/influencers";
+import {
+  getInfluencer,
+  listMyInfluencers,
+  type ContentItem,
+  type Influencer,
+} from "../lib/influencers";
 import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
 
@@ -419,16 +424,56 @@ function Influencers({
 
 /* ---------------- Content ---------------- */
 
+// A real generated post, flattened across all of the user's influencers with
+// the authoring influencer attached for attribution.
+type AggregatedPost = ContentItem & {
+  influencerId: string;
+  author: string;
+  authorImage: string | null;
+};
+
 function Content({ influencers }: { influencers: Influencer[] }) {
-  const items = influencers.flatMap((inf) =>
-    (inf.persona?.samplePosts || []).slice(0, 2).map((p, i) => ({
-      id: `${inf.id}-${i}`,
-      image: inf.image_url,
-      author: inf.persona?.displayName || inf.name,
-      hook: p.hook,
-      caption: p.caption,
-    })),
-  );
+  const [items, setItems] = useState<AggregatedPost[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Aggregate each influencer's real generated content (not persona sample
+  // placeholders). Generated posts live per-influencer, so we fetch each one's
+  // content and flatten them into a single cross-creator feed sorted by recency.
+  useEffect(() => {
+    if (influencers.length === 0) {
+      setItems([]);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    Promise.all(
+      influencers.map((inf) =>
+        getInfluencer(inf.id)
+          .then((d) =>
+            d.content.map((c) => ({
+              ...c,
+              influencerId: inf.id,
+              author: inf.persona?.displayName || inf.name,
+              authorImage: inf.image_url,
+            })),
+          )
+          .catch(() => [] as AggregatedPost[]),
+      ),
+    )
+      .then((lists) => {
+        if (!active) return;
+        const all = lists.flat().sort((a, b) => {
+          const ta = new Date(a.created_at).getTime();
+          const tb = new Date(b.created_at).getTime();
+          return tb - ta;
+        });
+        setItems(all);
+      })
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [influencers]);
 
   return (
     <>
@@ -439,10 +484,14 @@ function Content({ influencers }: { influencers: Influencer[] }) {
         Content
       </h1>
       <p className="mb-8 text-[15px] text-neutral-500">
-        Recent and planned posts across your influencers.
+        Generated posts across all your influencers.
       </p>
 
-      {items.length === 0 ? (
+      {loading && items.length === 0 ? (
+        <div className="rounded-2xl border border-neutral-200 p-10 text-center">
+          <p className="text-[14px] text-neutral-500">Loading your content…</p>
+        </div>
+      ) : items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-neutral-300 p-10 text-center">
           <p className="text-[14px] text-neutral-500">
             No content yet. Build an influencer, then open it to generate posts.
@@ -450,31 +499,34 @@ function Content({ influencers }: { influencers: Influencer[] }) {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((it) => (
-            <div
-              key={it.id}
-              className="overflow-hidden rounded-2xl border border-neutral-200"
-            >
-              {it.image && (
-                <img
-                  src={it.image}
-                  alt={it.author}
-                  className="aspect-square w-full object-cover"
-                />
-              )}
-              <div className="p-4">
-                <p className="text-[11px] uppercase tracking-wide text-neutral-400">
-                  {it.author}
-                </p>
-                <p className="mt-1 text-[14px] font-medium text-neutral-900">
-                  {it.hook}
-                </p>
-                <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-neutral-500">
-                  {it.caption}
-                </p>
+          {items.map((it) => {
+            const image = it.image_paths?.[0] || it.authorImage;
+            return (
+              <div
+                key={it.id}
+                className="overflow-hidden rounded-2xl border border-neutral-200"
+              >
+                {image && (
+                  <img
+                    src={image}
+                    alt={it.author}
+                    className="aspect-square w-full object-cover"
+                  />
+                )}
+                <div className="p-4">
+                  <p className="text-[11px] uppercase tracking-wide text-neutral-400">
+                    {it.author}
+                  </p>
+                  <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-neutral-600">
+                    {it.caption || it.title || "Untitled post"}
+                  </p>
+                  <span className="mt-2 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] capitalize text-neutral-500">
+                    {it.status}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </>
