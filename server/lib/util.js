@@ -45,20 +45,30 @@ export const LAST_NAMES = [
 // body/styling/attractiveness text is only used when there's no reference.
 function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
   const framing = selfie
-    ? "A selfie that the person took themselves on a smartphone front-facing " +
-      "camera, held at arm's length. The arm holding the phone is visible " +
-      "reaching toward the camera, OR it is a mirror selfie with the phone " +
-      "clearly visible in hand. Close, slightly-too-near crop" +
-      (hasReference
-        ? " typical of a front-facing phone camera, but WITHOUT distorting or " +
-          "reshaping the face — keep the face's true proportions and identity. "
-        : " with mild front-camera wide-angle lens distortion (face a little " +
-          "enlarged, slightly warped proportions). ") +
-      "It must obviously look like a self-taken phone photo, NOT a photo taken " +
-      "by someone else and NOT a professional or content-creator shot. "
-    : "A casual phone snapshot of the person in the scene, taken by a friend or " +
-      "on a propped-up phone — natural framing, not a selfie, not a posed " +
-      "professional or content-creator shot. ";
+    ? (hasReference
+        ? "A selfie that the person took themselves on an iPhone front-facing " +
+          "camera, held at arm's length. The arm holding the phone is visible " +
+          "reaching toward the camera, OR it is a mirror selfie with the phone " +
+          "clearly visible in hand. Close, slightly-too-near crop typical of a " +
+          "front-facing phone camera, but WITHOUT distorting or reshaping the " +
+          "face — keep the face's true proportions and identity. It must " +
+          "obviously look like a self-taken iPhone photo, NOT a photo taken by " +
+          "someone else and NOT a professional or content-creator shot. "
+        : "A selfie that the person took themselves on a smartphone front-facing " +
+          "camera, held at arm's length. The arm holding the phone is visible " +
+          "reaching toward the camera, OR it is a mirror selfie with the phone " +
+          "clearly visible in hand. Close, slightly-too-near crop with mild " +
+          "front-camera wide-angle lens distortion (face a little enlarged, " +
+          "slightly warped proportions). It must obviously look like a self-taken " +
+          "phone photo, NOT a photo taken by someone else and NOT a professional " +
+          "or content-creator shot. ")
+    : hasReference
+      ? "A casual iPhone snapshot of the person in the scene, taken by a friend " +
+        "holding an iPhone or on a propped-up phone — natural, slightly imperfect " +
+        "framing, not a selfie, not a posed professional or content-creator shot. "
+      : "A casual phone snapshot of the person in the scene, taken by a friend or " +
+        "on a propped-up phone — natural framing, not a selfie, not a posed " +
+        "professional or content-creator shot. ";
 
   // SUBJECT description is ONLY used without a reference. With a reference the
   // person's looks are defined by the reference photo, so we say nothing about
@@ -91,28 +101,41 @@ function amateurPhotoStyle({ selfie = true, hasReference = false } = {}) {
       "shine. ";
 
   // LIGHTING: on the no-reference path we allow warm/flash looks for variety.
-  // On the reference path we keep lighting tone-NEUTRAL — flash, "warm", and
-  // "flattering" all bias the render lighter/warmer and pull skin tone away from
-  // the reference (worst on darker complexions), so they're removed there.
+  // On the reference (post) path we keep skin tone stable but lighting should
+  // still look like a real iPhone snap — "soft, even" reads too professional.
   const lighting = hasReference
-    ? "Everyday phone-camera lighting: soft, even, natural ambient light with a " +
-      "neutral white balance and no strong warm or cool color cast on the skin. " +
-      "Natural, accurate exposure that does NOT brighten, lighten, or wash out " +
-      "the face. Not a professional studio setup, no ring light, no three-point " +
-      "lighting, no flash, no heavy color grading. "
+    ? "Shot on an iPhone (front camera for selfies, rear camera for scene shots). " +
+      "Everyday iPhone lighting: a little uneven and imperfect — window light, " +
+      "overhead room light, or flat indoor light with mixed color temperatures. " +
+      "NOT soft studio light, NOT golden-hour glow, NOT ring light, NOT " +
+      "three-point lighting, NOT cinematic or professional photoshoot lighting. " +
+      "Exposure and white balance must keep the face at the reference skin tone — " +
+      "do NOT brighten, lighten, or wash out the face. "
     : "Everyday phone-camera lighting: soft window daylight, warm indoor light, " +
       "or a mild on-camera flash — natural and a little uneven, but still " +
       "flattering enough to read as a photo someone would actually post. Not a " +
       "professional studio setup, no ring light, no three-point lighting, no " +
       "heavy color grading. ";
 
+  // Post/reference images only: push hard away from polished DSLR/influencer look.
+  const iphoneLook = hasReference
+    ? "Must read as a casual iPhone photo someone actually posted — NOT a DSLR, " +
+      "NOT portrait-mode background blur, NOT an influencer photoshoot, NOT " +
+      "cinematic color grading. Slight iPhone JPEG compression, a little grain, " +
+      "mild phone-camera softness, slightly off-center or imperfect framing, " +
+      "casual Instagram/Snapchat story energy. "
+    : "";
+
   const capture =
     "The PHOTO itself (not the person) is a candid, un-staged everyday phone " +
     "snapshot posted to Instagram or Snapchat. " +
     lighting +
     skin +
-    "Authentic amateur snapshot framing and capture. Avoid an obviously posed, " +
-    "glamour, or AI-perfect look.";
+    iphoneLook +
+    (hasReference
+      ? "Authentic amateur iPhone snapshot — never polished, never professional-looking."
+      : "Authentic amateur snapshot framing and capture. Avoid an obviously posed, " +
+        "glamour, or AI-perfect look.");
 
   return framing + subject + capture;
 }
