@@ -47,16 +47,28 @@ function amateurPhotoStyle({ selfie = true } = {}) {
       "professional or content-creator shot. ";
   return (
     framing +
-    "Authentic, candid, slightly awkward everyday moment posted to " +
-    "Instagram or Snapchat. Unflattering everyday lighting: harsh direct " +
-    "on-camera phone flash OR flat overhead room light OR a bright blown-out " +
-    "window behind them, with uneven exposure, mixed color temperatures, " +
-    "visible shadows across the face, and slight overexposed highlights on the " +
-    "skin. Not soft, not even, not glowy, not golden-hour, no ring light, no " +
-    "studio or three-point lighting. Slight phone-camera softness, mild motion " +
-    "blur or grain, realistic skin texture with pores, oil shine and minor " +
-    "blemishes, relaxed natural or slightly imperfect expression. Amateur " +
-    "snapshot aesthetic, no retouching, no glamour."
+    // SUBJECT: the person is genuinely attractive and well put-together. This is
+    // intentionally kept SEPARATE from the capture description below — a good
+    // looking person can still be captured in a casual, imperfect phone photo.
+    "The person is strikingly attractive and photogenic — naturally beautiful, " +
+    "with a symmetrical face, clear healthy skin, good bone structure, an " +
+    "appealing fit/toned figure, and a flattering hairstyle. They are well " +
+    "groomed with tasteful, on-trend styling and outfit, and a warm, confident, " +
+    "naturally engaging expression. Think a conventionally good-looking real " +
+    "person who happens to take casual photos. " +
+    // CAPTURE: only the photography is amateur/imperfect — NOT the person.
+    "The PHOTO itself (not the person) is a candid, un-staged everyday phone " +
+    "snapshot posted to Instagram or Snapchat. Everyday phone-camera lighting: " +
+    "soft window daylight, warm indoor light, or a mild on-camera flash — " +
+    "natural and a little uneven, with realistic mixed color temperatures, but " +
+    "still flattering enough to read as a photo someone would actually post. " +
+    "Not a professional studio setup, no ring light, no three-point lighting, " +
+    "no heavy color grading. Slight phone-camera softness, a little grain, and " +
+    "realistic skin texture with visible pores (NOT plastic, NOT over-smoothed, " +
+    "NOT airbrushed) — but clear, attractive skin without distracting blemishes " +
+    "or heavy oil shine. Authentic amateur snapshot framing and capture, with a " +
+    "genuinely attractive subject. Avoid an obviously posed, glamour, or " +
+    "AI-perfect look."
   );
 }
 

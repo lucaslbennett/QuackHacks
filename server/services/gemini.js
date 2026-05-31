@@ -311,7 +311,7 @@ Return JSON with this exact shape:
   "niche": string,
   "bio": string,                    // <= 150 chars instagram bio with light emoji
   "personality": string,            // 2-3 sentences, first impression of who they are
-  "appearance": string,             // vivid physical description for image generation
+  "appearance": string,             // vivid physical description for image generation; describe a conventionally attractive, photogenic person (symmetrical features, clear skin, flattering hair, appealing figure, tasteful style) while still feeling like a real, believable individual — not generic or plastic
   "aesthetic": string,              // visual mood: lighting, palette, vibe
   "contentPillars": string[4],      // recurring topics they post about
   "contentFormats": string[3],      // e.g. "talking-head reels", "day-in-the-life vlogs"
@@ -323,7 +323,7 @@ Return JSON with this exact shape:
     "bestTimes": string[],
     "hashtagThemes": string[]
   },
-  "imagePrompt": string             // a single rich prompt describing the character's portrait
+  "imagePrompt": string             // a single rich prompt describing the character's portrait; the person should look genuinely attractive and photogenic (the kind of good-looking creator who gains a following) while remaining a realistic, believable individual
 }`;
 
   // Higher temperature so repeated identical onboarding answers still yield
