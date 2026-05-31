@@ -22,13 +22,15 @@ interface DashboardProps {
   onCreate?: (seed?: string) => void;
   // Leaves the dashboard and returns to the marketing home.
   onHome?: () => void;
+  // Bumped when onboarding finishes so the roster refetches without a reload.
+  influencerRefresh?: number;
 }
 
 // Remembers the last dashboard sub-screen + open influencer across reloads.
 const SECTION_KEY = "qh.dashSection";
 const SELECTED_KEY = "qh.dashSelectedId";
 
-export default function Dashboard({ onCreate, onHome }: DashboardProps) {
+export default function Dashboard({ onCreate, onHome, influencerRefresh = 0 }: DashboardProps) {
   const { user } = useAuth();
   const name = user?.name || user?.email?.split("@")[0] || "there";
 
@@ -72,7 +74,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [user, influencerRefresh]);
 
   const selectSection = (s: DashSection) => {
     setSection(s);

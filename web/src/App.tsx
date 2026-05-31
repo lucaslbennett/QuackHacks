@@ -19,6 +19,7 @@ export default function App() {
   // null = closed; string (possibly empty) = creator open, seeded with the text
   // the user typed in a composer.
   const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
+  const [influencerRefresh, setInfluencerRefresh] = useState(0);
 
   // Persist the home/dashboard choice across reloads.
   useEffect(() => {
@@ -51,7 +52,11 @@ export default function App() {
         {showDashboard ? (
           // The dashboard owns its own full-height sidebar (branding + nav +
           // auth), so the marketing navbar is hidden here.
-          <Dashboard onCreate={(seed = "") => setOnboardSeed(seed)} onHome={goHome} />
+          <Dashboard
+            onCreate={(seed = "") => setOnboardSeed(seed)}
+            onHome={goHome}
+            influencerRefresh={influencerRefresh}
+          />
         ) : (
           <>
             <Navbar
@@ -72,6 +77,7 @@ export default function App() {
             onComplete={() => {
               setOnboardSeed(null);
               setShowDashboard(true);
+              setInfluencerRefresh((n) => n + 1);
             }}
             onRequireSignIn={() => setAuthMode("signup")}
           />
