@@ -13,6 +13,7 @@ import {
 } from "../lib/analytics";
 import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
+import InfluencerImage from "./InfluencerImage";
 
 interface DashboardProps {
   // Launches the influencer creator, optionally with a composer prompt.
@@ -167,17 +168,12 @@ function InfluencerList({
                 isSel ? "bg-neutral-200/70" : "hover:bg-neutral-200/50"
               }`}
             >
-              {inf.image_url ? (
-                <img
-                  src={inf.image_url}
-                  alt={label}
-                  className="h-9 w-9 shrink-0 rounded-md object-cover"
-                />
-              ) : (
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-200 text-[13px] text-neutral-500">
-                  {label.charAt(0).toUpperCase()}
-                </div>
-              )}
+              <InfluencerImage
+                src={inf.image_url}
+                name={label}
+                className="h-9 w-9 shrink-0 rounded-md object-cover"
+                fallbackClassName="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-200 text-[13px] text-neutral-500"
+              />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium text-neutral-900">
                   {label}
@@ -419,17 +415,12 @@ function Influencers({
                 title={`Manage ${label}`}
                 className="group relative block overflow-hidden rounded-2xl border border-neutral-200 text-left transition-transform duration-300 ease-out hover:z-10 hover:-translate-y-1 hover:scale-[1.03] hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b73d6]"
               >
-                {inf.image_url ? (
-                  <img
-                    src={inf.image_url}
-                    alt={label}
-                    className="aspect-square w-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="flex aspect-square w-full items-center justify-center bg-neutral-100 text-[28px] text-neutral-300">
-                    {label.charAt(0).toUpperCase()}
-                  </div>
-                )}
+                <InfluencerImage
+                  src={inf.image_url}
+                  name={label}
+                  className="aspect-square w-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
+                  fallbackClassName="flex aspect-square w-full items-center justify-center bg-neutral-100 text-[28px] text-neutral-300"
+                />
                 <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-medium capitalize text-neutral-700 backdrop-blur">
                   {inf.status}
                 </span>

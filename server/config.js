@@ -232,7 +232,10 @@ export const config = {
     usePostiz: bool(process.env.SCHEDULER_USE_POSTIZ, false),
   },
 
-  // Where generated media (audio/video/images) gets written.
+  // Where generated media (audio/video/images) gets written and served from
+  // (/media). On hosts with an ephemeral filesystem (e.g. Railway), point this
+  // at a mounted persistent volume so images survive redeploys — set
+  // MEDIA_DIR to the volume's mount path (e.g. /data/media).
   mediaDir: process.env.MEDIA_DIR || "media",
 
   // Public base URL where this server is reachable (e.g. the Railway domain).

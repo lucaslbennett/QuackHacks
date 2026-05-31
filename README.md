@@ -95,7 +95,14 @@ integrations are configured, and unconfigured services simply error on use.
    `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 3. `nixpacks.toml` installs **ffmpeg** and builds the dashboard; `npm start` serves the
    API + built frontend on `$PORT`. The schema auto-migrates on boot.
-4. (Optional) Mount a Railway volume at `media/` to persist generated media across deploys.
+4. **Persist generated images across deploys (recommended).** Railway's
+   filesystem is ephemeral, so generated images in `media/` are wiped on every
+   redeploy/restart and their stored `/media/...` URLs then 404. To fix:
+   - Attach a **Volume** to the app service with **Mount Path** `/data/media`
+     (1 GB is plenty).
+   - Set the service variable `MEDIA_DIR=/data/media`.
+   - Redeploy. Images written from then on survive redeploys. (Images created
+     before the volume existed are already gone — regenerate them once.)
 
 ## API quick reference
 

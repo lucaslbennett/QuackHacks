@@ -25,6 +25,7 @@ import {
   getCachedInfluencerAnalytics,
   type InfluencerAnalytics,
 } from "../lib/analytics";
+import InfluencerImage from "./InfluencerImage";
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -147,13 +148,15 @@ export default function InfluencerPanel({
 
       {/* Header: portrait + identity + status */}
       <section className="mb-8 flex flex-col gap-6 sm:flex-row sm:items-center">
-        {influencer.image_url && (
-          <div className="flex shrink-0 flex-col items-center gap-2">
-            <img
-              src={influencer.image_url}
-              alt={name}
-              className="h-32 w-32 rounded-2xl border border-black/10 object-cover sm:h-40 sm:w-40"
-            />
+        <div className="flex shrink-0 flex-col items-center gap-2">
+          <InfluencerImage
+            src={influencer.image_url}
+            name={name}
+            className="h-32 w-32 rounded-2xl border border-black/10 object-cover sm:h-40 sm:w-40"
+            fallbackClassName="flex h-32 w-32 items-center justify-center rounded-2xl border border-black/10 bg-black/[0.04] sm:h-40 sm:w-40"
+            fallbackTextClassName="text-[48px] text-black/20"
+          />
+          {influencer.image_url && (
             <button
               type="button"
               onClick={() =>
@@ -166,8 +169,8 @@ export default function InfluencerPanel({
             >
               <span aria-hidden>↓</span> Download
             </button>
-          </div>
-        )}
+          )}
+        </div>
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <h1
