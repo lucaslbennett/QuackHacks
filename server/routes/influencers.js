@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as repo from "../db/repo.js";
 import { mediaUrl } from "../lib/util.js";
+import { requireAuth } from "../lib/auth.js";
 
 const router = Router();
 
@@ -16,6 +17,81 @@ function normalizeIgUrl(input) {
   handle = handle.replace(/^@/, "");
   return `https://www.instagram.com/${handle}/`;
 }
+
+// Loads an influencer and 404s if missing. If it's owned by a user, requires the
+// requester to be that owner (403 otherwise). User-less (seed/shared) rows are
+// readable by anyone, preserving the existing TestPanel/dev behavior.
+async function loadOwned(req, res) {
+  const influencer = await repo.influencers.get(req.params.id);
+  if (!influencer) {
+    res.status(404).json({ ok: false, error: "not found" });
+    return null;
+  }
+  if (influencer.user_id && influencer.user_id !== req.user?.id) {
+    res.status(403).json({ ok: false, error: "forbidden" });
+    return null;
+  }
+  return influencer;
+}
+
+// Launch an influencer straight from the onboarding quiz funnel: persists the
+// character the user designed (persona + portrait) as a user-owned influencer in
+// the "ready" state so it shows up in their dashboard and can be managed there.
+// The Instagram account is set up separately (stubbed for now).
+router.post(
+  "/launch",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const { character, imageUrl } = req.body;
+    if (!character || typeof character !== "object") {
+      return res.status(400).json({ ok: false, error: "character is required" });
+    }
+
+    const name = String(character.displayName || "").trim() || "My Influencer";
+    const handle = (character.handleSuggestions?.[0] || "").trim() || null;
+    const postsPerDay = Number(character.postingStrategy?.postsPerDay) || 2;
+
+    const influencer = await repo.influencers.create({
+      userId: req.user.id,
+      name,
+      niche: character.niche || null,
+      handle,
+      questionnaire: character.answers || {},
+      persona: character,
+      imageUrl: imageUrl || null,
+      postsPerDay,
+      // "ready" = character set up; account setup is the next step.
+      status: "ready",
+    });
+
+    res.status(201).json({ ok: true, influencer });
+  })
+);
+
+// The signed-in user's influencers, with a light per-row summary (account
+// status + recent post count) so the dashboard list can render at a glance.
+router.get(
+  "/mine",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const list = await repo.influencers.listForUser(req.user.id);
+    const summarized = await Promise.all(
+      list.map(async (inf) => {
+        const [account, posts] = await Promise.all([
+          repo.igAccounts.forInfluencer(inf.id),
+          repo.posts.listFor(inf.id),
+        ]);
+        return {
+          ...inf,
+          accountStatus: account?.status || null,
+          accountUsername: account?.username || null,
+          postCount: posts.length,
+        };
+      })
+    );
+    res.json({ ok: true, influencers: summarized });
+  })
+);
 
 // Create an influencer from the onboarding wizard. Optionally kicks off cloning.
 router.post(
@@ -53,9 +129,10 @@ router.get(
 
 router.get(
   "/:id",
+  requireAuth,
   asyncH(async (req, res) => {
-    const influencer = await repo.influencers.get(req.params.id);
-    if (!influencer) return res.status(404).json({ ok: false, error: "not found" });
+    const influencer = await loadOwned(req, res);
+    if (!influencer) return;
     const [sources, account, content, posts, metrics, jobs] = await Promise.all([
       repo.sourceAccounts.listFor(influencer.id),
       repo.igAccounts.forInfluencer(influencer.id),
@@ -133,13 +210,16 @@ const ACTIONS = {
 // Trigger a pipeline action by enqueueing the corresponding job.
 router.post(
   "/:id/actions/:action",
+  requireAuth,
   asyncH(async (req, res) => {
+    const influencer = await loadOwned(req, res);
+    if (!influencer) return;
     const type = ACTIONS[req.params.action];
     if (!type) return res.status(400).json({ ok: false, error: "unknown action" });
     const payload = {};
     if (req.params.action === "generate" && req.body.topic) payload.topic = req.body.topic;
     if (req.params.action === "post" && req.body.contentId) payload.contentId = req.body.contentId;
-    const job = await repo.jobs.enqueue({ influencerId: req.params.id, type, payload });
+    const job = await repo.jobs.enqueue({ influencerId: influencer.id, type, payload });
     res.status(202).json({ ok: true, job });
   })
 );
