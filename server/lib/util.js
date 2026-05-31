@@ -21,23 +21,8 @@ export const PHOTO_NO_UI_RULE =
   "no watermarks, no captions burned into the image, no app chrome of any kind. " +
   "If a phone appears, only the back, edge, or case — never an on-screen interface.";
 
-// Real, common first names and surnames spanning a range of origins. Sampled
-// independently so a generated influencer's name feels like a real person
-// rather than a niche pun. Shared by the no-LLM fallback and by the LLM path,
-// which is fed a randomly-picked surname so repeated identical inputs don't
-// collapse to the same name.
-export const FIRST_NAMES = [
-  "Maya", "Liam", "Sofia", "Noah", "Aaliyah", "Ethan", "Chloe", "Mateo",
-  "Priya", "Lucas", "Amara", "Daniel", "Hana", "Caleb", "Isabella", "Omar",
-  "Zoe", "Kai", "Leila", "Marcus", "Nina", "Diego", "Grace", "Ravi",
-  "Elena", "Jonah", "Yuki", "Adaeze", "Stella", "Theo",
-];
-export const LAST_NAMES = [
-  "Nguyen", "Okafor", "Castellanos", "Petrov", "Andersen", "Cohen", "Yamamoto",
-  "Reyes", "Kowalski", "Mbeki", "Singh", "Rossi", "Adebayo", "Park", "Haddad",
-  "Fernandez", "O'Brien", "Schneider", "Ivanova", "Tanaka", "Mensah", "Lindqvist",
-  "Delgado", "Bauer", "Khan", "Moreau", "Costa", "Abdi", "Walsh", "Sato",
-];
+// Common given names and surnames for onboarding (see nameLists.js).
+export { FIRST_NAMES, LAST_NAMES, formatNameListsForPrompt } from "./nameLists.js";
 
 // The "amateur phone-photo" look applied to influencer images so they read as
 // authentic real-person snapshots rather than polished studio shots. Shared by

@@ -9,6 +9,7 @@ import {
   loadMediaAsBase64,
   sleep,
 } from "../lib/util.js";
+import { formatNameListsForPrompt } from "../lib/nameLists.js";
 import { createLogger } from "../lib/logger.js";
 
 const log = createLogger("gemini");
@@ -281,21 +282,22 @@ Return JSON with this exact shape:
   return completeJson({ system, prompt, maxTokens: 2000 });
 }
 
-function onboardingNamingRules(suggestedLastName) {
+function onboardingNamingRules() {
   return `Naming rules (IMPORTANT — read carefully):
 - The name must read like a REAL ORDINARY PERSON, not a brand or a username.
-- firstName: a common, real-world first name an actual person would have. If the
-  user already specified a first name in their answers, keep it; otherwise invent one.
-${
-  suggestedLastName
-    ? `- lastName: use "${suggestedLastName}" unless the user explicitly specified a different surname in their answers.`
-    : "- lastName: a real, common surname that a real family would have, drawn from a wide range of real-world origins."
-}
+- Pick one firstName from the approved first-name list and one lastName from the
+  approved last-name list below. They must sound like a believable real person
+  together (plausible cultural pairing — not a random mismatch, not a brand).
+- If the user already specified a first or last name in their answers, keep it
+  and only choose the other name from the lists.
+- Do NOT use names outside these lists unless the user explicitly provided them.
+- Vary your choices across generations — do not default to the same few names.
 - The last name MUST NOT be a pun, MUST NOT relate to the niche/topic, and MUST
   NOT alliterate or rhyme with the first name. Bad: "Stacy Gains" (fitness pun),
   "Mia Spice" (cooking pun), "Tara Travels". Good: "Stacy Nguyen", "Mia Okafor".
-- The first and last name should feel independent of each other and of the niche,
-  like two names picked at random from a real population.`;
+- displayName must be exactly "{firstName} {lastName}".
+
+${formatNameListsForPrompt()}`;
 }
 
 function onboardingAnswersBlock(answers) {
@@ -320,7 +322,7 @@ How to use the answers (IMPORTANT):
 
 // Fast first pass: names + visual identity + portrait prompt. Kept small so image
 // generation can start while the richer content plan is still being written.
-export async function designOnboardingVisual({ answers, suggestedLastName, trace }) {
+export async function designOnboardingVisual({ answers, trace }) {
   trace?.detail("visual_identity_start", { model: config.gemini.model });
   log.info("Designing onboarding visual identity");
   const system =
@@ -332,7 +334,7 @@ export async function designOnboardingVisual({ answers, suggestedLastName, trace
 
 ${onboardingAnswersBlock(answers)}
 
-${onboardingNamingRules(suggestedLastName)}
+${onboardingNamingRules()}
 
 ${IMAGE_SCENE_RULES}
 
@@ -425,18 +427,13 @@ Return JSON with this exact shape:
 }
 
 // Portrait onboarding: visual identity first, then persona details + image in parallel.
-export async function designOnboardingCharacterWithImage({
-  answers,
-  suggestedLastName,
-  trace,
-}) {
+export async function designOnboardingCharacterWithImage({ answers, trace }) {
   log.info("Designing onboarding character with parallel portrait");
   trace?.step("request_received", {
     answerKeys: Object.keys(answers || {}),
-    suggestedLastName,
   });
 
-  const visual = await designOnboardingVisual({ answers, suggestedLastName, trace });
+  const visual = await designOnboardingVisual({ answers, trace });
   const imagePrompt =
     visual.imagePrompt ||
     [visual.appearance, visual.aesthetic].filter(Boolean).join(". ") ||
@@ -472,12 +469,9 @@ export async function designOnboardingCharacterWithImage({
 
 // Designs a persona + content plan straight from the onboarding chat answers
 // (no scraped sources). Returns a compact shape the onboarding UI renders.
-export async function designOnboardingCharacter({
-  answers,
-  suggestedLastName,
-}) {
+export async function designOnboardingCharacter({ answers }) {
   log.info("Designing onboarding character");
-  const visual = await designOnboardingVisual({ answers, suggestedLastName });
+  const visual = await designOnboardingVisual({ answers });
   const details = await designOnboardingPersonaDetails({ answers, visual });
   return { ...visual, ...details };
 }

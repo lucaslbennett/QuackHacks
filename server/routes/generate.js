@@ -4,7 +4,6 @@ import * as gemini from "../services/gemini.js";
 import * as postiz from "../services/postiz.js";
 import { config } from "../config.js";
 import { requireAuth, optionalAuth } from "../lib/auth.js";
-import { pick, LAST_NAMES } from "../lib/util.js";
 import { createGenTrace } from "../lib/genTrace.js";
 
 const router = Router();
@@ -69,10 +68,6 @@ router.post(
         .json({ ok: false, error: "character generation is not configured" });
     }
 
-    // Per-request randomness so repeated identical answers (e.g. always asking
-    // for "Stacy") don't collapse to the same surname. The surname is picked
-    // from a real list and suggested to the model.
-    const suggestedLastName = pick(LAST_NAMES);
     const trace = createGenTrace("onboarding-character", {
       answerKeys: Object.keys(answers),
     });
@@ -81,7 +76,6 @@ router.post(
       trace.step("handler_start");
       const { character, imageUrl } = await gemini.designOnboardingCharacterWithImage({
         answers,
-        suggestedLastName,
         trace,
       });
       trace.done({
