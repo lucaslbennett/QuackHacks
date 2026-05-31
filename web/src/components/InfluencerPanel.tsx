@@ -30,6 +30,7 @@ import {
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
 import InfluencerCustomizeTab from "./InfluencerCustomizeTab";
+import PostingScheduleModal from "./PostingScheduleModal";
 import type { PostingScheduleSummary } from "../lib/influencers";
 import { postTimeCaption, latestAutopilotContent, autopilotStatusLabel, hashtagLine } from "../lib/postTime";
 
@@ -963,7 +964,9 @@ function ContentTab({
           influencerId={influencer.id}
           isLinked={isLinked}
           onClose={() => setShowSchedule(false)}
-          onSaved={(summary) => setScheduleSummary(summary.active ? summary : null)}
+          onSaved={(summary: PostingScheduleSummary) =>
+            setScheduleSummary(summary.active ? summary : null)
+          }
         />
       )}
 
@@ -1124,10 +1127,7 @@ function AccountTab({
 }: {
   account: InfluencerAccount | null;
   influencer: Influencer;
-  onLinked: (link: {
-    postiz_integration_id: string;
-    postiz_platform: string;
-  }) => void;
+  onLinked: (linked: Partial<Influencer>) => void;
 }) {
   const [status, setStatus] = useState<
     "loading" | "not_configured" | "disconnected" | "ready" | "error"
