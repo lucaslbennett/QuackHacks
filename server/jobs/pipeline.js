@@ -80,7 +80,6 @@ export async function spawnAccount({ influencerId }) {
     influencerId,
     persona: influencer.persona,
     email,
-    phone: account.phone,
   });
 
   const updated = await repo.igAccounts.update(account.id, {

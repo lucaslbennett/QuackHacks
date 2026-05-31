@@ -180,6 +180,9 @@ export default function TestPanel() {
             <Dot ok={bbConfigured} /> Browserbase
           </span>
           <span className="flex items-center gap-1.5">
+            <Dot ok={Boolean(status?.integrations.capsolver)} /> CapSolver
+          </span>
+          <span className="flex items-center gap-1.5">
             <Dot ok={Boolean(status?.integrations.database)} /> Database
           </span>
         </div>
@@ -203,7 +206,6 @@ export default function TestPanel() {
               ["name", "Name"],
               ["niche", "Niche"],
               ["email", "Email"],
-              ["phone", "Phone"],
             ] as const
           ).map(([key, label]) => (
             <input

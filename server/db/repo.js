@@ -94,10 +94,10 @@ export const sourceAccounts = {
 };
 
 export const igAccounts = {
-  create: ({ influencerId, email, phone }) =>
+  create: ({ influencerId, email }) =>
     one(
-      `INSERT INTO ig_accounts (influencer_id, email, phone, status) VALUES ($1,$2,$3,'pending') RETURNING *`,
-      [influencerId, email || null, phone || null]
+      `INSERT INTO ig_accounts (influencer_id, email, status) VALUES ($1,$2,'pending') RETURNING *`,
+      [influencerId, email || null]
     ),
   forInfluencer: (influencerId) =>
     one(

@@ -64,11 +64,27 @@ export const config = {
     // Stagehand needs a model for its act/extract reasoning. Reuse Gemini.
     env: process.env.STAGEHAND_ENV || "BROWSERBASE",
     // Residential proxies reduce how often Instagram throws a CAPTCHA and
-    // improve Browserbase's background solve rate. On by default.
-    proxies: bool(process.env.BROWSERBASE_PROXIES, true),
-    // "verified" sessions use a real device fingerprint (lower bot-detection).
-    // On by default; disable if your project doesn't have it enabled.
-    verified: bool(process.env.BROWSERBASE_VERIFIED, true),
+    // improve Browserbase's background reCAPTCHA-Enterprise solve rate. PAID
+    // plans only — enabling on a free plan makes session creation fail (402),
+    // so default OFF and let upgraded projects opt in.
+    proxies: bool(process.env.BROWSERBASE_PROXIES, false),
+    // "verified" = advanced stealth (real device fingerprint). ENTERPRISE plan
+    // only — fails with 403 elsewhere — so default OFF and opt in when eligible.
+    verified: bool(process.env.BROWSERBASE_VERIFIED, false),
+  },
+
+  // Third-party CAPTCHA solver (CapSolver — https://capsolver.com). When an
+  // API key is set we solve reCAPTCHA challenges programmatically (sitekey ->
+  // token via API -> inject) as a stronger fallback to Browserbase's plan-gated
+  // background solver. This lets the FREE Browserbase plan clear IG's reCAPTCHA
+  // Enterprise without residential proxies or a human solve. Disabled (and
+  // simply skipped) when no key is present.
+  capsolver: {
+    apiKey: process.env.CAPSOLVER_API_KEY || "",
+    apiBase: (process.env.CAPSOLVER_API_BASE || "https://api.capsolver.com").replace(/\/+$/, ""),
+    // How long to poll a created task before giving up, and how often.
+    pollIntervalMs: parseInt(process.env.CAPSOLVER_POLL_MS || "3000", 10),
+    timeoutMs: parseInt(process.env.CAPSOLVER_TIMEOUT_MS || "120000", 10),
   },
 
   verification: {

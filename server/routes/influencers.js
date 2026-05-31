@@ -21,7 +21,7 @@ function normalizeIgUrl(input) {
 router.post(
   "/",
   asyncH(async (req, res) => {
-    const { name, niche, questionnaire, sourceLinks = [], postsPerDay, email, phone, autoClone } =
+    const { name, niche, questionnaire, sourceLinks = [], postsPerDay, email, autoClone } =
       req.body;
     if (!name) return res.status(400).json({ ok: false, error: "name is required" });
 
@@ -32,8 +32,8 @@ router.post(
       if (url) await repo.sourceAccounts.create({ influencerId: influencer.id, url });
     }
 
-    if (email || phone) {
-      await repo.igAccounts.create({ influencerId: influencer.id, email, phone });
+    if (email) {
+      await repo.igAccounts.create({ influencerId: influencer.id, email });
     }
 
     if (autoClone) {
@@ -110,15 +110,15 @@ router.post(
   })
 );
 
-// Set the email/phone used for IG account creation.
+// Set the email used for IG account creation.
 router.post(
   "/:id/account",
   asyncH(async (req, res) => {
-    const { email, phone } = req.body;
+    const { email } = req.body;
     let account = await repo.igAccounts.forInfluencer(req.params.id);
-    if (account) account = await repo.igAccounts.update(account.id, { email, phone });
-    else account = await repo.igAccounts.create({ influencerId: req.params.id, email, phone });
-    res.json({ ok: true, account: { id: account.id, email: account.email, phone: account.phone } });
+    if (account) account = await repo.igAccounts.update(account.id, { email });
+    else account = await repo.igAccounts.create({ influencerId: req.params.id, email });
+    res.json({ ok: true, account: { id: account.id, email: account.email } });
   })
 );
 

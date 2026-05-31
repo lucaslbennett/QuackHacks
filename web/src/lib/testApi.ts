@@ -8,6 +8,7 @@ export interface IntegrationStatus {
   elevenlabs: boolean;
   fal: boolean;
   browserbase: boolean;
+  capsolver: boolean;
 }
 
 export interface StatusResponse {
@@ -50,7 +51,6 @@ export interface SpawnRun {
     username: string;
     password: string;
     email: string;
-    phone: string;
     fullName: string;
     loggedIn: boolean;
     note?: string;
@@ -64,7 +64,6 @@ export interface TestInputs {
   name: string;
   niche: string;
   email: string;
-  phone: string;
   sources: string[];
 }
 
@@ -106,7 +105,6 @@ export const testApi = {
         name: inputs.name,
         niche: inputs.niche,
         email: inputs.email,
-        phone: inputs.phone,
         sources: inputs.sources,
       }),
     }),
@@ -122,7 +120,6 @@ export function autofillInputs(): TestInputs {
     name: "Nova Sterling",
     niche: "streetwear fashion",
     email: "",
-    phone: "+15555550123",
     sources: ["https://www.instagram.com/instagram/"],
   };
 }

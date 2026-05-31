@@ -9,7 +9,12 @@
     "dev": "node --watch server/index.js",
     "migrate": "node server/db/migrate.js",
     "build": "npm --prefix web install --no-audit --no-fund && npm --prefix web run build",
-    "web:dev": "npm --prefix web run dev"
+    "web:dev": "npm --prefix web run dev",
+    "test:signup": "node server/scripts/signupTest.js",
+    "test:signup:loop": "node server/scripts/signupTest.js --runs 5 --all",
+    "probe:mailosaur": "node server/scripts/probeMailosaur.js",
+    "probe:birthday": "node server/scripts/probeBirthday.js",
+    "probe:capsolver": "node server/scripts/probeCapsolver.js"
   },
   "engines": {
     "node": ">=20.19"

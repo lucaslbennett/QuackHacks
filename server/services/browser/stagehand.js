@@ -112,26 +112,31 @@ export async function createStagehand({ sessionData, onSession } = {}) {
     domSettleTimeout: 3000,
     // Bound any LLM-backed act() so a slow inference can't hang the flow.
     actTimeoutMs: 20000,
+    // Pause flow execution while Browserbase's background CAPTCHA solver is
+    // active, and resume once it finishes. This is the SDK-native counterpart to
+    // our console-event barrier and stops act()/extract() from racing a solve.
+    waitForCaptchaSolves: true,
     // Reuse cached element resolutions server-side across identical act/observe.
     serverCache: true,
     verbose: process.env.DEBUG ? 2 : 1,
     browserbaseSessionCreateParams: {
       projectId: config.browserbase.projectId,
-      // Residential proxies + a "verified" (real-fingerprint) browser make IG
-      // far less likely to throw a CAPTCHA at all, and materially improve the
-      // background solver's success rate when one does appear.
-      proxies: config.browserbase.proxies,
+      // Residential proxies make IG far less likely to throw a CAPTCHA and
+      // materially improve the background reCAPTCHA-Enterprise solve rate.
+      // PAID plans only, so only include the key when explicitly enabled —
+      // sending proxies:true on a free plan makes session creation fail (402).
+      ...(config.browserbase.proxies ? { proxies: true } : {}),
       browserSettings: {
         // Reuse a stored Browserbase context for persistent IG sessions.
         context: sessionData?.contextId
           ? { id: sessionData.contextId, persist: true }
           : undefined,
-        // Background CAPTCHA solving (reCAPTCHA et al.). Enabled by default on
-        // Browserbase, but set explicitly so intent is clear.
+        // Background CAPTCHA solving (incl. reCAPTCHA Enterprise). Available on
+        // all plans; success is best-effort and improves with proxies/stealth.
         solveCaptchas: true,
-        // Real device fingerprint / consistent UA — lowers bot-detection that
-        // triggers the "Help us confirm it's you" challenge.
-        verified: config.browserbase.verified,
+        // Advanced stealth (real device fingerprint) — ENTERPRISE only, so only
+        // include when enabled; sending it elsewhere fails session creation (403).
+        ...(config.browserbase.verified ? { verified: true } : {}),
       },
     },
   });
@@ -150,11 +155,38 @@ export async function createStagehand({ sessionData, onSession } = {}) {
 
 // Convenience: run a function with a Stagehand instance and always close it.
 export async function withStagehand(fn, opts) {
-  const stagehand = await createStagehand(opts);
+  const opts2 = opts || {};
+  // Capture the live session info so we can hand the watchable URL to the flow
+  // (needed for the manual-CAPTCHA-assist fallback) while still forwarding the
+  // caller's own onSession callback.
+  let session = { sessionId: null, sessionUrl: null };
+  const wrappedOpts = {
+    ...opts2,
+    onSession: (info) => {
+      session = info || session;
+      try {
+        opts2.onSession?.(info);
+      } catch (err) {
+        log.warn("onSession callback error", err?.message);
+      }
+    },
+  };
+  const stagehand = await createStagehand(wrappedOpts);
   try {
     const page = stagehand.context.pages()[0] || (await stagehand.context.newPage());
+    // NOTE: Stagehand v3's "understudy" Page only emits "console" events — it has
+    // no "close"/"crash"/"disconnected" events (and no page.keyboard, getByRole,
+    // locator.evaluate/getAttribute/filter). Flows must therefore use only the
+    // supported primitives; a thrown error (rather than an event) is how a dead
+    // page surfaces, and withStagehand's finally{} closes the session cleanly.
     const { waitForCaptcha } = attachCaptchaWatcher(page);
-    return await fn({ stagehand, page, waitForCaptcha });
+    return await fn({
+      stagehand,
+      page,
+      waitForCaptcha,
+      sessionId: session.sessionId,
+      sessionUrl: session.sessionUrl,
+    });
   } finally {
     await stagehand.close().catch((e) => log.warn("close error", e.message));
   }

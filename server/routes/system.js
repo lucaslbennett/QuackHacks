@@ -5,6 +5,7 @@ import * as gemini from "../services/gemini.js";
 import * as eleven from "../services/elevenlabs.js";
 import * as fal from "../services/fal.js";
 import * as stagehand from "../services/browser/stagehand.js";
+import * as capsolver from "../services/browser/capsolver.js";
 import { createInstagramAccount } from "../services/browser/createAccount.js";
 import { pool } from "../db/pool.js";
 import { submitManualCode, generateEmail } from "../services/verification.js";
@@ -30,6 +31,7 @@ router.get("/status", async (req, res) => {
       elevenlabs: eleven.isConfigured(),
       fal: fal.isConfigured(),
       browserbase: stagehand.isConfigured(),
+      capsolver: capsolver.isConfigured(),
     },
     missingKeys: missingKeys(),
     verification: {
@@ -139,7 +141,6 @@ router.post("/smoke/spawn-user", async (req, res) => {
     questionnaire: req.body.questionnaire || {},
     sources: req.body.sources || [],
     email: req.body.email || generateEmail({ seed: req.body.name || "qa" }),
-    phone: req.body.phone || "",
   };
 
   const runId = randomUUID();
@@ -173,7 +174,6 @@ router.post("/smoke/spawn-user", async (req, res) => {
         influencerId: runId,
         persona,
         email: inputs.email,
-        phone: inputs.phone,
         onSession: ({ sessionId, sessionUrl }) => {
           run.sessionId = sessionId;
           run.sessionUrl = sessionUrl;
@@ -184,7 +184,6 @@ router.post("/smoke/spawn-user", async (req, res) => {
         username: account.username,
         password: account.password,
         email: account.email,
-        phone: account.phone,
         fullName: account.fullName,
         loggedIn: account.loggedIn,
         note: account.note,
