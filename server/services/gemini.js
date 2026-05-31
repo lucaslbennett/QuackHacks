@@ -383,6 +383,82 @@ const POST_ANGLES = [
 
 const POST_TIMES = ["morning", "midday", "afternoon", "evening"];
 
+// Mega-tags and engagement-bait tags that spam bots monitor aggressively.
+const BOT_MAGNET_HASHTAGS = new Set([
+  "explorepage",
+  "explore",
+  "viral",
+  "fyp",
+  "foryou",
+  "foryoupage",
+  "instagood",
+  "instagram",
+  "photooftheday",
+  "picoftheday",
+  "followme",
+  "follow4follow",
+  "followforfollow",
+  "like4like",
+  "likeforlike",
+  "tagsforlikes",
+  "gainfollowers",
+  "freefollowers",
+  "followback",
+  "instadaily",
+  "instalike",
+  "fitnessmotivation",
+  "motivation",
+  "inspiration",
+  "mindset",
+  "hustle",
+  "goals",
+  "love",
+  "happy",
+  "beautiful",
+  "photography",
+  "reels",
+  "reelsinstagram",
+  "trending",
+  "viralreels",
+]);
+
+const HASHTAG_RULES = `
+Hashtag rules (CRITICAL — generic tags attract "Send me this post" spam bots):
+- Return exactly 5 or 6 hashtags in the "hashtags" array (lowercase, no # symbol).
+- NEVER use mega-viral or engagement-bait tags bots monitor: explorepage, viral, fyp,
+  instagood, photooftheday, followme, like4like, fitnessmotivation, motivation,
+  gym, workout, fitness, wellness (as standalone single words), love, trending.
+- Each tag must be SPECIFIC to THIS post — compound micro-niche tags a real creator
+  in this niche would use (e.g. "legdayathome", "miamiyoga", "thriftfit") NOT broad
+  category labels.
+- Prefer 3–4 hyper-specific tags + at most 1 location or small-community tag.
+- Do not reuse the same hashtag bundle every post; vary with the angle and setting.
+- Hashtags must relate to what is literally in the photo, not generic niche slogans.
+`.trim();
+
+function normalizeHashtag(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function sanitizeHashtags(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const h of Array.isArray(raw) ? raw : []) {
+    const tag = normalizeHashtag(h);
+    if (!tag || tag.length < 3 || tag.length > 30) continue;
+    if (BOT_MAGNET_HASHTAGS.has(tag)) continue;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
 // Shared rules so bios/captions show vibe indirectly instead of summarizing the brief.
 const HUMAN_COPY_RULES = `
 Voice rules (bios, taglines, sample posts, and captions — CRITICAL):
@@ -444,6 +520,7 @@ function sceneOptionsFromPersona(persona) {
 // Slim context for post generation — voice and scene lists only, no appearance text.
 function postContextFromPersona(persona) {
   const { settings, outfits } = sceneOptionsFromPersona(persona);
+  const themes = persona?.postingStrategy?.hashtagThemes;
   return {
     displayName: persona?.displayName,
     niche: persona?.niche, // scene/outfit logic only — do not echo in caption
@@ -451,6 +528,9 @@ function postContextFromPersona(persona) {
     bioVoiceReference: persona?.bio, // tone only — do not paraphrase or reuse lines
     typicalSettings: settings,
     typicalOutfits: outfits,
+    hashtagThemes: Array.isArray(themes)
+      ? themes.map((t) => String(t).trim()).filter(Boolean).slice(0, 6)
+      : [],
   };
 }
 
@@ -518,6 +598,12 @@ Rules:
   caption or hashtags. Embody the audience's tone instead of naming them. A real
   person doesn't announce who their target audience is in their own caption.
 - Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
+${HASHTAG_RULES}
+${
+  ctx.hashtagThemes?.length
+    ? `- Persona hashtag themes (use only as inspiration for SPECIFIC compound tags — never copy these verbatim if they are broad): ${ctx.hashtagThemes.join(", ")}`
+    : ""
+}
 ${sceneRules}
 - Describe what the person is DOING in the photo (action/pose). Refer to them as "the person" / "she" — never describe face, skin tone, hair, or body.
 - A reference photo defines what she looks like; your scene fields define only where she is, what she wears, and what she's doing.
@@ -526,7 +612,7 @@ ${sceneRules}
 Return JSON with this exact shape:
 {
   "caption": string,            // max 400 chars, no em dashes (—)
-  "hashtags": string[10],
+  "hashtags": string[5],        // 5–6 specific micro-niche tags, lowercase, no #
   "setting": string,
   "outfit": string,
   "action": string,
@@ -541,14 +627,8 @@ Return JSON with this exact shape:
     temperature: 1.15,
   });
 
-  // Normalize hashtags: strip leading #, drop empties, de-dupe.
-  const hashtags = Array.from(
-    new Set(
-      (Array.isArray(data.hashtags) ? data.hashtags : [])
-        .map((h) => String(h).trim().replace(/^#+/, "").replace(/\s+/g, ""))
-        .filter(Boolean)
-    )
-  );
+  // Normalize hashtags: strip bot magnets, de-dupe, cap at 6.
+  const hashtags = sanitizeHashtags(data.hashtags);
 
   const shotType = String(data.shotType || "").trim().toLowerCase() === "scene" ? "scene" : "selfie";
   const imagePrompt =

@@ -88,7 +88,7 @@ export function startScheduler() {
   );
 
   log.info(
-    `Scheduler started (autopilot replan @ 08:05 + every 5m, legacy daily content @ 08:05, metrics every 6h)`
+    `Scheduler started (autopilot ensure-queue @ 08:05 + every 5m, legacy daily content @ 08:05, metrics every 6h)`
   );
 }
 

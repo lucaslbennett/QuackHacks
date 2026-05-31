@@ -37,6 +37,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
   );
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [selected, setSelected] = useState<Influencer | null>(null);
+  const [listHovered, setListHovered] = useState(false);
 
   // Persist the active section so a reload returns to the same tab.
   useEffect(() => {
@@ -83,6 +84,13 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     setSelected(inf);
   };
 
+  const listPinned = section === "influencers" && selected !== null;
+  const listCollapsed = listPinned && !listHovered;
+
+  useEffect(() => {
+    if (!listPinned) setListHovered(false);
+  }, [listPinned]);
+
   const refreshInfluencers = () => {
     listMyInfluencers().then(setInfluencers);
   };
@@ -110,6 +118,7 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     <InfluencerList
       influencers={influencers}
       selectedId={selected?.id ?? null}
+      collapsed={listCollapsed}
       onSelect={openInfluencer}
       onCreate={() => onCreate?.()}
       onReorder={handleReorder}
@@ -127,8 +136,18 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
       }}
       onCreate={() => onCreate?.()}
       middleColumn={middleColumn}
+      middleColumnCollapsed={listCollapsed}
+      middleColumnHoverable={listPinned}
+      onMiddleColumnMouseEnter={() => setListHovered(true)}
+      onMiddleColumnMouseLeave={(viaRightEdge) => {
+        if (viaRightEdge) setListHovered(false);
+      }}
     >
-      <div className="mx-auto max-w-5xl px-6 py-8 sm:px-10 sm:py-10">
+      <div
+        className={`px-6 py-8 sm:px-10 sm:py-10 ${
+          listCollapsed ? "mx-auto w-full max-w-none" : "mx-auto max-w-5xl"
+        }`}
+      >
         {section === "overview" && (
           <Studio name={name} onCreate={(seed) => onCreate?.(seed)} onBrowse={() => setSection("content")} />
         )}
@@ -161,12 +180,14 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
 function InfluencerList({
   influencers,
   selectedId,
+  collapsed = false,
   onSelect,
   onCreate,
   onReorder,
 }: {
   influencers: Influencer[];
   selectedId: string | null;
+  collapsed?: boolean;
   onSelect: (inf: Influencer) => void;
   onCreate: () => void;
   onReorder: (order: string[]) => void;
@@ -185,6 +206,46 @@ function InfluencerList({
     next.splice(to, 0, fromId);
     onReorder(next);
   };
+
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        {influencers.length === 0 ? (
+          <p className="py-4 text-center text-[11px] leading-relaxed text-neutral-400">
+            None yet
+          </p>
+        ) : (
+          influencers.map((inf) => {
+            const label = inf.persona?.displayName || inf.name;
+            const isSel = inf.id === selectedId;
+            return (
+              <button
+                key={inf.id}
+                type="button"
+                onClick={() => onSelect(inf)}
+                title={label}
+                aria-label={label}
+                aria-current={isSel ? "true" : undefined}
+                className={`relative shrink-0 rounded-lg transition-all ${
+                  isSel
+                    ? "ring-2 ring-inset ring-[#5b73d6]"
+                    : "opacity-80 hover:opacity-100"
+                }`}
+              >
+                <InfluencerImage
+                  src={inf.image_url}
+                  name={label}
+                  className="h-11 w-11 rounded-lg object-cover"
+                  fallbackClassName="flex h-11 w-11 items-center justify-center rounded-lg bg-neutral-200 text-[13px] text-neutral-500"
+                />
+                <StatusDot status={inf.status} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-neutral-50/60" />
+              </button>
+            );
+          })
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-1">
@@ -292,7 +353,7 @@ function GripIcon() {
   );
 }
 
-function StatusDot({ status }: { status: string }) {
+function StatusDot({ status, className = "" }: { status: string; className?: string }) {
   const color =
     status === "active"
       ? "bg-emerald-500"
@@ -301,7 +362,12 @@ function StatusDot({ status }: { status: string }) {
         : status === "error"
           ? "bg-red-500"
           : "bg-neutral-300";
-  return <span className={`h-2 w-2 shrink-0 rounded-full ${color}`} title={status} />;
+  return (
+    <span
+      className={`h-2 w-2 shrink-0 rounded-full ${color} ${className}`}
+      title={status}
+    />
+  );
 }
 
 /* ---------------- Studio (hero) ---------------- */

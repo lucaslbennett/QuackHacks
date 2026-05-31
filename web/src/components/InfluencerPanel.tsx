@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   generatePostPreview,
   publishPostPreview,
@@ -11,6 +11,7 @@ import {
   linkPostizChannel,
   unlinkPostizChannel,
   updateInfluencerHandle,
+  getPostingSchedule,
   type Influencer,
   type ContentItem,
   type InfluencerAccount,
@@ -29,7 +30,7 @@ import {
 import InfluencerImage from "./InfluencerImage";
 import PostingScheduleModal from "./PostingScheduleModal";
 import type { PostingScheduleSummary } from "../lib/influencers";
-import { postTimeCaption } from "../lib/postTime";
+import { postTimeCaption, latestAutopilotContent, autopilotStatusLabel, hashtagLine } from "../lib/postTime";
 
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -111,6 +112,11 @@ export default function InfluencerPanel({
   };
   useEffect(() => {
     loadChannels();
+  }, []);
+
+  const handleContentSync = useCallback((items: ContentItem[], inf?: Influencer) => {
+    setContent(items);
+    if (inf) setInfluencer(inf);
   }, []);
 
   // Applied when a channel is linked/changed (from the Account tab or the bar).
@@ -325,6 +331,7 @@ export default function InfluencerPanel({
           onPosted={(item) => {
             setContent((c) => [item, ...c]);
           }}
+          onContentSync={handleContentSync}
           onConnectAccount={() => setTab("account")}
           onViewAnalytics={() => setTab("analytics")}
           onHandleSaved={(h) =>
@@ -511,6 +518,7 @@ function ContentTab({
   influencer,
   content,
   onPosted,
+  onContentSync,
   onConnectAccount,
   onViewAnalytics,
   onHandleSaved,
@@ -518,6 +526,7 @@ function ContentTab({
   influencer: Influencer;
   content: ContentItem[];
   onPosted: (item: ContentItem) => void;
+  onContentSync: (items: ContentItem[], influencer?: Influencer) => void;
   onConnectAccount: () => void;
   onViewAnalytics: () => void;
   onHandleSaved: (handle: string) => void;
@@ -529,6 +538,7 @@ function ContentTab({
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [autopilotIssue, setAutopilotIssue] = useState<string | null>(null);
   const [scheduleSummary, setScheduleSummary] = useState<PostingScheduleSummary | null>(
     () => {
       const s = influencer.posting_schedule;
@@ -547,6 +557,7 @@ function ContentTab({
                     : `Every ~${(s.intervalMinutes ?? 360) / 60}h`
               : `Daily at ${(s.times || []).join(" & ")}`,
           nextRunAt: s.nextRunAt,
+          intervalMinutes: s.intervalMinutes,
         };
       }
       return null;
@@ -554,6 +565,56 @@ function ContentTab({
   );
   const name = influencer.persona?.displayName || influencer.name;
   const isLinked = Boolean(influencer.postiz_integration_id);
+  const latestAutopilot = useMemo(() => latestAutopilotContent(content), [content]);
+  const manualFlowActive = Boolean(preview || post || loading);
+
+  // Poll while autopilot is on so the hero updates when a new post is generated.
+  useEffect(() => {
+    if (!scheduleSummary?.active) return;
+    let active = true;
+    const refresh = () => {
+      Promise.all([getInfluencer(influencer.id), getPostingSchedule(influencer.id)])
+        .then(([detail, sched]) => {
+          if (!active) return;
+          onContentSync(detail.content, detail.influencer);
+          const s = detail.influencer.posting_schedule;
+          if (s?.enabled) {
+            setScheduleSummary((prev) =>
+              prev?.active
+                ? {
+                    ...prev,
+                    nextRunAt: s.nextRunAt ?? prev.nextRunAt,
+                  }
+                : prev,
+            );
+          }
+          if (sched.autopilotBlocked) {
+            setAutopilotIssue(sched.autopilotBlocked);
+          } else if (sched.lastAutopilotJob?.status === "failed" && sched.lastAutopilotJob.lastError) {
+            setAutopilotIssue(`Autopilot failed: ${sched.lastAutopilotJob.lastError}`);
+          } else {
+            setAutopilotIssue(null);
+          }
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const ms =
+      scheduleSummary.intervalMinutes === 5 || influencer.posting_schedule?.intervalMinutes === 5
+        ? 15_000
+        : 30_000;
+    const t = setInterval(refresh, ms);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [
+    scheduleSummary?.active,
+    scheduleSummary?.intervalMinutes,
+    influencer.id,
+    influencer.posting_schedule?.intervalMinutes,
+    onContentSync,
+  ]);
 
   // Step 1: generate the image + caption and show it for review (no publish).
   const handleGenerate = async () => {
@@ -661,6 +722,11 @@ function ContentTab({
           )}
         </p>
       )}
+      {scheduleSummary?.active && autopilotIssue && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+          {autopilotIssue}
+        </div>
+      )}
       <div className="mb-4 flex items-center gap-2 text-[13px] text-black/50">
         <span>Posting as</span>
         <EditableHandle
@@ -691,11 +757,40 @@ function ContentTab({
         </div>
       )}
 
-      {!post && !preview && !loading && (
+      {!manualFlowActive && scheduleSummary?.active && latestAutopilot && (
+        <AutopilotPostHero
+          item={latestAutopilot}
+          onViewAnalytics={onViewAnalytics}
+        />
+      )}
+
+      {!manualFlowActive && scheduleSummary?.active && !latestAutopilot && (
+        <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/50 p-10 text-center">
+          <p className="text-[14px] text-emerald-800">
+            Autopilot is on — the next post for {name} will appear here once it&apos;s
+            generated.
+            {scheduleSummary.nextRunAt && (
+              <>
+                {" "}
+                Expected around{" "}
+                {new Date(scheduleSummary.nextRunAt).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+                .
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      {!manualFlowActive && !scheduleSummary?.active && (
         <div className="rounded-2xl border border-dashed border-black/15 p-10 text-center">
           <p className="text-[14px] text-black/50">
-            Generate a fresh post for {name}. You'll get to review the image and
-            caption, then publish it to Instagram through Postiz when you're
+            Generate a fresh post for {name}. You&apos;ll get to review the image and
+            caption, then publish it to Instagram through Postiz when you&apos;re
             happy with it.
           </p>
         </div>
@@ -910,6 +1005,95 @@ function ContentTab({
         </div>
       )}
     </>
+  );
+}
+
+function AutopilotPostHero({
+  item,
+  onViewAnalytics,
+}: {
+  item: ContentItem;
+  onViewAnalytics: () => void;
+}) {
+  const img = item.image_paths?.[0];
+  const tags = hashtagLine(item.hashtags);
+  const { headline, sub, posted } = autopilotStatusLabel(item);
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
+      <div>
+        <div className="overflow-hidden rounded-2xl border border-black/10">
+          {img ? (
+            <img
+              src={img}
+              alt={item.meta?.altText || item.caption || "Autopilot post"}
+              className="aspect-square w-full object-cover"
+            />
+          ) : (
+            <div className="flex aspect-square items-center justify-center bg-black/[0.04] text-[14px] text-black/40">
+              Generating image…
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <div
+          className={`flex items-center gap-2 rounded-2xl border px-4 py-3 ${
+            posted
+              ? "border-emerald-200 bg-emerald-50"
+              : "border-[#5b73d6]/30 bg-[#5b73d6]/5"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`flex h-6 w-6 items-center justify-center rounded-full text-[13px] text-white ${
+              posted ? "bg-emerald-500" : "bg-[#5b73d6]"
+            }`}
+          >
+            {posted ? "✓" : "◷"}
+          </span>
+          <div>
+            <p
+              className={`text-[14px] font-medium ${posted ? "text-emerald-800" : "text-[#3f54b3]"}`}
+            >
+              {headline}
+            </p>
+            {sub && (
+              <p className={`text-[12px] ${posted ? "text-emerald-700/80" : "text-[#3f54b3]/80"}`}>
+                {sub}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-black/10 p-4">
+          <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-black/40">
+            Caption
+          </p>
+          <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-black/80">
+            {item.caption || "—"}
+          </p>
+          {tags && (
+            <p className="mt-3 break-words text-[14px] leading-relaxed text-[#5b73d6]">{tags}</p>
+          )}
+        </div>
+
+        <p className="text-[13px] text-black/45">
+          Stays here until the next autopilot post replaces it. Use Generate post above for a
+          one-off draft you review yourself.
+        </p>
+
+        <button
+          type="button"
+          onClick={onViewAnalytics}
+          className="inline-flex items-center justify-center gap-1.5 rounded-full border border-black/15 px-5 py-3 text-[14px] font-medium text-black/80 transition hover:bg-black/5"
+        >
+          View analytics
+          <span aria-hidden>→</span>
+        </button>
+      </div>
+    </div>
   );
 }
 

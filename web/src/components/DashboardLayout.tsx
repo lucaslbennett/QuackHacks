@@ -24,6 +24,12 @@ interface DashboardLayoutProps {
   onCreate: () => void;
   // The middle "Influencers" column content (the roster list).
   middleColumn?: ReactNode;
+  // When true, the middle column shrinks to avatar thumbnails only.
+  middleColumnCollapsed?: boolean;
+  middleColumnHoverable?: boolean;
+  onMiddleColumnMouseEnter?: () => void;
+  // Called when the pointer leaves; collapse only when viaRightEdge is true.
+  onMiddleColumnMouseLeave?: (viaRightEdge: boolean) => void;
   children: ReactNode;
 }
 
@@ -33,6 +39,10 @@ export default function DashboardLayout({
   onHome,
   onCreate,
   middleColumn,
+  middleColumnCollapsed = false,
+  middleColumnHoverable = false,
+  onMiddleColumnMouseEnter,
+  onMiddleColumnMouseLeave,
   children,
 }: DashboardLayoutProps) {
   const { user, logout } = useAuth();
@@ -137,21 +147,44 @@ export default function DashboardLayout({
 
       {/* Desktop middle column (Influencers) */}
       {middleColumn && (
-        <aside className="hidden w-72 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60 md:flex">
-          <div className="flex items-center justify-between px-5 pb-3 pt-6">
-            <span className="text-[15px] font-semibold text-neutral-900">
-              Influencers
-            </span>
+        <aside
+          className={`relative hidden shrink-0 flex-col border-r border-neutral-200 bg-neutral-50/60 transition-[width] duration-200 ease-out md:flex ${
+            middleColumnCollapsed ? "w-[4.75rem]" : "w-72"
+          } ${middleColumnHoverable && !middleColumnCollapsed ? "z-20 shadow-lg shadow-neutral-900/5" : ""}`}
+          onMouseEnter={() => middleColumnHoverable && onMiddleColumnMouseEnter?.()}
+          onMouseLeave={(e) => {
+            if (!onMiddleColumnMouseLeave) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const viaRightEdge = e.clientX >= rect.right - 2;
+            onMiddleColumnMouseLeave(viaRightEdge);
+          }}
+        >
+          <div
+            className={`flex items-center pb-3 pt-6 ${
+              middleColumnCollapsed
+                ? "justify-center px-2"
+                : "justify-between px-5"
+            }`}
+          >
+            {!middleColumnCollapsed && (
+              <span className="text-[15px] font-semibold text-neutral-900">
+                Influencers
+              </span>
+            )}
             <button
               type="button"
               onClick={onCreate}
               aria-label="New influencer"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-200/70 hover:text-neutral-900"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-200/70 hover:text-neutral-900"
             >
               <PlusIcon />
             </button>
           </div>
-          <div className="no-scrollbar flex-1 overflow-y-auto px-3 pb-6">
+          <div
+            className={`no-scrollbar flex-1 pb-6 ${
+              middleColumnCollapsed ? "overflow-y-auto px-2 py-1" : "overflow-y-auto px-3"
+            }`}
+          >
             {middleColumn}
           </div>
         </aside>

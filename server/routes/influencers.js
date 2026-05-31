@@ -4,6 +4,7 @@ import * as postiz from "../services/postiz.js";
 import { mediaUrl, persistInfluencerProfileImage } from "../lib/util.js";
 import { validateScheduleInput, formatScheduleSummary, normalizeSchedule } from "../lib/schedule.js";
 import { replanInfluencer } from "../jobs/postingSchedule.js";
+import { config } from "../config.js";
 import { computeLiveProfile } from "../lib/liveProfile.js";
 import { requireAuth } from "../lib/auth.js";
 
@@ -454,11 +455,26 @@ router.get(
     const influencer = await loadOwned(req, res);
     if (!influencer) return;
     const schedule = normalizeSchedule(influencer.posting_schedule);
+    const lastAutopilotJob = await repo.jobs.lastOfType(influencer.id, "auto_post_postiz");
     res.json({
       ok: true,
       schedule,
       summary: formatScheduleSummary(schedule),
-      canAutopilot: Boolean(influencer.postiz_integration_id),
+      canAutopilot: Boolean(influencer.postiz_integration_id) && Boolean(config.publicBaseUrl),
+      autopilotBlocked: !config.publicBaseUrl
+        ? "Server needs PUBLIC_BASE_URL so Postiz can fetch generated images."
+        : !influencer.postiz_integration_id
+          ? "Link an Instagram account first."
+          : null,
+      lastAutopilotJob: lastAutopilotJob
+        ? {
+            id: lastAutopilotJob.id,
+            status: lastAutopilotJob.status,
+            runAt: lastAutopilotJob.run_at,
+            lastError: lastAutopilotJob.last_error,
+            updatedAt: lastAutopilotJob.updated_at,
+          }
+        : null,
     });
   })
 );
@@ -489,7 +505,7 @@ router.put(
       status: validated.schedule.enabled ? "active" : owned.status,
     });
 
-    const plan = await replanInfluencer(influencer.id);
+    const plan = await replanInfluencer(influencer.id, { force: true });
     res.json({
       ok: true,
       schedule: normalizeSchedule(influencer.posting_schedule),

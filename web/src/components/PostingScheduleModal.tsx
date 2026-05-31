@@ -106,11 +106,17 @@ export default function PostingScheduleModal({
       setNextRunAt(result.schedule.nextRunAt);
       onSaved?.(result.summary);
       const next = fmtNext(result.schedule.nextRunAt);
+      const warn =
+        result.warning === "no_public_url"
+          ? " Autopilot needs PUBLIC_BASE_URL on the server."
+          : result.warning === "no_postiz"
+            ? " Link Instagram before autopilot can run."
+            : "";
       setSavedMsg(
         enabled
           ? next
-            ? `Autopilot on — next post around ${next}`
-            : `Autopilot on — ${result.planned} post(s) queued`
+            ? `Autopilot on — next post around ${next}${warn}`
+            : `Autopilot on — ${result.planned} post(s) queued${warn}`
           : "Autopilot turned off",
       );
     } catch (e) {

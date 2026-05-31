@@ -18,15 +18,22 @@ async function clearPendingAutoJobs(influencerId) {
   await repo.jobs.cancelPending(influencerId, [AUTO_JOB]);
 }
 
+async function hasActiveAutoJob(influencerId) {
+  return repo.jobs.hasActive(influencerId, AUTO_JOB);
+}
+
 // Enqueues generate+schedule jobs from the influencer's posting_schedule config.
-export async function replanInfluencer(influencerId) {
+// `force` clears pending jobs and replans (user saved schedule). Without force,
+// skips when a pending/running autopilot job already exists so the 5-minute cron
+// does not endlessly delete and reschedule jobs before they can run.
+export async function replanInfluencer(influencerId, { force = false } = {}) {
   const influencer = await repo.influencers.get(influencerId);
   if (!influencer) throw new Error("influencer not found");
 
   const schedule = normalizeSchedule(influencer.posting_schedule);
-  await clearPendingAutoJobs(influencerId);
 
   if (!schedule.enabled) {
+    if (force) await clearPendingAutoJobs(influencerId);
     log.info(`Autopilot off for ${influencerId}`);
     return { planned: 0, schedule: formatScheduleSummary(schedule) };
   }
@@ -38,6 +45,17 @@ export async function replanInfluencer(influencerId) {
     log.warn(`Autopilot needs PUBLIC_BASE_URL for ${influencerId}`);
     return { planned: 0, schedule: formatScheduleSummary(schedule), warning: "no_public_url" };
   }
+
+  if (!force && (await hasActiveAutoJob(influencerId))) {
+    log.info(`Skip replan for ${influencerId} — autopilot job already queued or running`);
+    return {
+      planned: 0,
+      schedule: formatScheduleSummary(schedule),
+      skipped: true,
+    };
+  }
+
+  await clearPendingAutoJobs(influencerId);
 
   const jobs = planScheduleJobs(schedule);
   let planned = 0;
@@ -63,15 +81,15 @@ export async function replanInfluencer(influencerId) {
   return { planned, schedule: formatScheduleSummary({ ...schedule, nextRunAt }) };
 }
 
-// Replan every influencer with autopilot enabled. Called by the daily cron and
-// a lighter periodic tick for random-interval schedules.
+// Ensure every enabled influencer has a queued autopilot job (recovery only).
+// Does NOT cancel existing pending/running jobs — see replanInfluencer({ force }).
 export async function replanAllEnabled() {
   const all = await repo.influencers.list();
   let total = 0;
   for (const inf of all) {
     const schedule = normalizeSchedule(inf.posting_schedule);
     if (!schedule.enabled) continue;
-    const { planned } = await replanInfluencer(inf.id);
+    const { planned } = await replanInfluencer(inf.id, { force: false });
     total += planned;
   }
   return { total };

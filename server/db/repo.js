@@ -292,6 +292,20 @@ export const jobs = {
        WHERE influencer_id=$1 AND status='pending' AND type = ANY($2::text[])`,
       [influencerId, types]
     ),
+  hasActive: (influencerId, type) =>
+    one(
+      `SELECT id, status, run_at, last_error FROM jobs
+       WHERE influencer_id=$1 AND type=$2 AND status IN ('pending', 'running')
+       ORDER BY run_at ASC LIMIT 1`,
+      [influencerId, type]
+    ),
+  lastOfType: (influencerId, type) =>
+    one(
+      `SELECT id, status, run_at, last_error, updated_at, result FROM jobs
+       WHERE influencer_id=$1 AND type=$2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [influencerId, type]
+    ),
   // Atomically claim the next due job.
   claimNext: async () =>
     one(

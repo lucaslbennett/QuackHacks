@@ -38,6 +38,7 @@ export interface ContentItem {
   updated_at?: string;
   scheduled_at?: string | null;
   posted_at?: string | null;
+  meta?: { source?: string; altText?: string } | null;
 }
 
 export interface InfluencerAccount {
@@ -298,6 +299,14 @@ export async function getPostingSchedule(influencerId: string): Promise<{
   schedule: PostingSchedule;
   summary: PostingScheduleSummary;
   canAutopilot: boolean;
+  autopilotBlocked: string | null;
+  lastAutopilotJob: {
+    id: string;
+    status: string;
+    runAt: string;
+    lastError: string | null;
+    updatedAt: string;
+  } | null;
 }> {
   const res = await fetch(`/api/influencers/${influencerId}/schedule`, {
     headers: authHeaders(),
@@ -310,6 +319,8 @@ export async function getPostingSchedule(influencerId: string): Promise<{
     schedule: data.schedule,
     summary: data.summary,
     canAutopilot: Boolean(data.canAutopilot),
+    autopilotBlocked: data.autopilotBlocked ?? null,
+    lastAutopilotJob: data.lastAutopilotJob ?? null,
   };
 }
 
