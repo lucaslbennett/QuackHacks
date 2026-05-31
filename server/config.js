@@ -39,8 +39,10 @@ export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
     model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
-    // Nano Banana Pro (Gemini 3 Pro Image) for high-quality asset production.
-    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image",
+    // Nano Banana 2 (Gemini 3.1 Flash Image) — fast, high-quality image
+    // generation. GA model id (the -preview variant is deprecated). Override
+    // with GEMINI_IMAGE_MODEL (e.g. gemini-3-pro-image for Nano Banana Pro).
+    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
   },
 
   elevenlabs: {
