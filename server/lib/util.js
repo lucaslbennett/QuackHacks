@@ -137,10 +137,12 @@ export function buildInfluencerImagePrompt(
       "have zero doubt it is the same person. Do NOT redesign, beautify, " +
       "lighten, darken, slim, age, or otherwise change how they look in any way; " +
       "your only job for the person is to carry their exact appearance over " +
-      "unchanged. The text below describes ONLY the new photo's scene and how it " +
-      "is shot — never how the person looks. Generate a NEW candid photo of this " +
-      "exact person in which only the setting, pose, outfit, expression, and " +
-      "lighting differ. " +
+      "unchanged. Copy face, skin, hair, and body from the reference. Do NOT " +
+      "copy the reference photo's clothing, background, or location — use the " +
+      "scene description for outfit and setting instead. The text below " +
+      "describes ONLY the new photo's scene and how it is shot — never how the " +
+      "person looks. Generate a NEW candid photo of this exact person in which " +
+      "only the setting, pose, outfit, expression, and lighting differ. " +
       style +
       ` Scene for this new photo: ${description}`
     );
