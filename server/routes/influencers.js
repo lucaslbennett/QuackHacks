@@ -153,35 +153,36 @@ async function computeInfluencerAnalytics(influencer, days) {
   };
   if (!postiz.isConfigured() || !integrationId) return result;
 
-  // Channel-level metrics.
-  try {
-    const ch = await postiz.getPlatformAnalytics(integrationId, { days });
+  // Load posts from DB and channel metrics from Postiz in parallel, then fetch
+  // all per-post metrics concurrently (sequential calls were the main latency).
+  const [posts, channelMetrics] = await Promise.all([
+    repo.posts.listFor(influencer.id),
+    postiz.getPlatformAnalytics(integrationId, { days }).catch(() => null),
+  ]);
+
+  if (channelMetrics) {
     result.channel = {
-      followers: PICK(ch, ["followers", "follower", "totalfollowers"]),
-      impressions: PICK(ch, ["impressions", "reach", "views", "totalimpressions"]),
+      followers: PICK(channelMetrics, ["followers", "follower", "totalfollowers"]),
+      impressions: PICK(channelMetrics, ["impressions", "reach", "views", "totalimpressions"]),
     };
     if (result.channel.followers != null || result.channel.impressions != null) {
       result.available = true;
     }
-  } catch {
-    /* no channel data */
   }
 
-  // Per-post metrics for each published Postiz post.
-  const posts = await repo.posts.listFor(influencer.id);
   const postizPosts = posts.filter((p) => p.postiz_post_id);
+  const postMetrics = await Promise.all(
+    postizPosts.map((p) => postiz.getPostAnalytics(p.postiz_post_id, { days }).catch(() => ({})))
+  );
+
   let sumLikes = 0;
   let sumComments = 0;
   let sumViews = 0;
   let anyPost = false;
 
-  for (const p of postizPosts) {
-    let metrics = {};
-    try {
-      metrics = await postiz.getPostAnalytics(p.postiz_post_id, { days });
-    } catch {
-      metrics = {};
-    }
+  for (let i = 0; i < postizPosts.length; i++) {
+    const p = postizPosts[i];
+    const metrics = postMetrics[i] || {};
     const likes = PICK(metrics, ["likes", "like", "reactions"]);
     const comments = PICK(metrics, ["comments", "comment", "replies"]);
     const views = PICK(metrics, ["views", "impressions", "reach", "plays"]);

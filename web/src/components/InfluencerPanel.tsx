@@ -25,6 +25,7 @@ import {
 import {
   getInfluencerAnalytics,
   getCachedInfluencerAnalytics,
+  prefetchInfluencerAnalytics,
   type InfluencerAnalytics,
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
@@ -101,6 +102,11 @@ export default function InfluencerPanel({
     return () => {
       active = false;
     };
+  }, [initial.id]);
+
+  // Start analytics while the user is on Content/Account so Analytics opens fast.
+  useEffect(() => {
+    prefetchInfluencerAnalytics(initial.id);
   }, [initial.id]);
 
   // Load connected channels (best-effort) so we can show the linked account's

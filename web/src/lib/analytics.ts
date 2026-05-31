@@ -68,6 +68,12 @@ export function getCachedAllAnalytics(days = 7): AllAnalytics | null {
   return allCache.get(String(days)) ?? null;
 }
 
+// Warms the module cache as soon as the influencer panel opens so the Analytics
+// tab can render live numbers immediately when the user switches to it.
+export function prefetchInfluencerAnalytics(influencerId: string, days = 7): void {
+  void getInfluencerAnalytics(influencerId, days);
+}
+
 // Live analytics for one influencer. Never throws — returns an empty (all-null)
 // shape on failure so callers always fall back to demo numbers. Caches the
 // result when it contains real data.
