@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import * as authApi from "../lib/auth";
 import type { User } from "../lib/auth";
 import { AuthContext } from "../lib/authContext";
+import { clearAnalyticsCache } from "../lib/analytics";
 
 export default function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -38,6 +39,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await authApi.logout();
+    clearAnalyticsCache();
     setUser(null);
   };
 

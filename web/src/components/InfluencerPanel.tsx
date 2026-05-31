@@ -13,6 +13,11 @@ import {
   listPostizChannels,
   type PostizChannel,
 } from "../lib/postiz";
+import {
+  getInfluencerAnalytics,
+  getCachedInfluencerAnalytics,
+  type InfluencerAnalytics,
+} from "../lib/analytics";
 
 // Deterministic pseudo-random stats from the influencer id so each one shows
 // stable (but distinct) placeholder numbers until real metrics arrive.
@@ -158,6 +163,7 @@ export default function InfluencerPanel({
           content={content}
           onPosted={(item) => setContent((c) => [item, ...c])}
           onConnectAccount={() => setTab("account")}
+          onViewAnalytics={() => setTab("analytics")}
         />
       )}
       {tab === "account" && (
@@ -174,7 +180,7 @@ export default function InfluencerPanel({
         />
       )}
       {tab === "analytics" && (
-        <AnalyticsTab stats={stats} persona={persona} />
+        <AnalyticsTab influencer={influencer} stats={stats} persona={persona} />
       )}
     </div>
   );
@@ -203,11 +209,13 @@ function ContentTab({
   content,
   onPosted,
   onConnectAccount,
+  onViewAnalytics,
 }: {
   influencer: Influencer;
   content: ContentItem[];
   onPosted: (item: ContentItem) => void;
   onConnectAccount: () => void;
+  onViewAnalytics: () => void;
 }) {
   const [post, setPost] = useState<PublishedPost | null>(null);
   const [loading, setLoading] = useState(false);
@@ -365,6 +373,14 @@ function ContentTab({
                 Published — it may take a moment to appear on the channel.
               </p>
             )}
+            <button
+              type="button"
+              onClick={onViewAnalytics}
+              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-black/15 px-5 py-3 text-[14px] font-medium text-black/80 transition hover:bg-black/5"
+            >
+              View analytics
+              <span aria-hidden>→</span>
+            </button>
           </div>
         </div>
       )}
@@ -820,36 +836,160 @@ function AccountTab({
 
 /* ---------------- Analytics ---------------- */
 
+// Small badge shown when at least one metric is real (live from Postiz).
+function LiveBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+      </span>
+      Live
+    </span>
+  );
+}
+
 function AnalyticsTab({
+  influencer,
   stats,
   persona,
 }: {
+  influencer: Influencer;
   stats: { followers: number; posts: number; engagement: string; views: number };
   persona: Influencer["persona"];
 }) {
+  // Seed from cache so the previous live numbers show instantly when you return
+  // to this tab, instead of placeholders.
+  const cached = getCachedInfluencerAnalytics(influencer.id);
+  const [live, setLive] = useState<InfluencerAnalytics | null>(cached);
+  const [loading, setLoading] = useState(!cached);
+
+  // Always revalidate on mount to get a fresh live update. Only overwrite the
+  // cached numbers when the fresh fetch actually has real data, so a transient
+  // empty response doesn't blank out what we already showed.
+  useEffect(() => {
+    let active = true;
+    if (!getCachedInfluencerAnalytics(influencer.id)) setLoading(true);
+    getInfluencerAnalytics(influencer.id)
+      .then((a) => {
+        if (!active) return;
+        setLive((prev) => (a.available || !prev ? a : prev));
+      })
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [influencer.id]);
+
+  // Per-metric: prefer the live value, fall back to the seeded demo number.
+  const followers = live?.channel?.followers ?? stats.followers;
+  const views = live?.totals.views ?? stats.views;
+  const comments = live?.totals.comments;
+  const likes = live?.totals.likes;
+  const realPosts = live?.posts.filter(
+    (p) => p.likes != null || p.comments != null || p.views != null,
+  ) ?? [];
+
+  const cards = [
+    { label: "Followers", value: fmt(followers), live: live?.channel?.followers != null },
+    { label: "Total views", value: fmt(views), live: live?.totals.views != null },
+    {
+      label: "Comments",
+      value: comments != null ? fmt(comments) : `${stats.engagement}%`,
+      sub: comments != null ? undefined : "engagement",
+      live: comments != null,
+    },
+    {
+      label: "Likes",
+      value: likes != null ? fmt(likes) : String(stats.posts),
+      sub: likes != null ? undefined : "posts",
+      live: likes != null,
+    },
+  ];
+
   return (
     <>
+      <div className="mb-4 flex items-center gap-3">
+        <h2
+          className="text-[22px] sm:text-[26px]"
+          style={{ fontFamily: "var(--font-heading)" }}
+        >
+          Performance
+        </h2>
+        {live?.available ? (
+          <LiveBadge />
+        ) : (
+          <span className="rounded-full bg-black/5 px-2.5 py-1 text-[12px] text-black/40">
+            {loading ? "Loading…" : "Demo data"}
+          </span>
+        )}
+      </div>
+
       <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {[
-          { label: "Followers", value: fmt(stats.followers) },
-          { label: "Total views", value: fmt(stats.views) },
-          { label: "Engagement", value: `${stats.engagement}%` },
-          { label: "Posts", value: String(stats.posts) },
-        ].map((s) => (
+        {cards.map((s) => (
           <div
             key={s.label}
             className="rounded-2xl border border-black/10 bg-black/[0.02] p-5"
           >
-            <p className="text-[13px] text-black/50">{s.label}</p>
+            <p className="flex items-center gap-1.5 text-[13px] text-black/50">
+              {s.label}
+              {s.live && (
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              )}
+            </p>
             <p
               className="mt-2 text-[26px] sm:text-[32px]"
               style={{ fontFamily: "var(--font-heading)" }}
             >
               {s.value}
             </p>
+            {s.sub && (
+              <p className="mt-0.5 text-[11px] capitalize text-black/30">
+                {s.sub}
+              </p>
+            )}
           </div>
         ))}
       </section>
+
+      {/* Live per-post metrics from Postiz (only shown when real data exists). */}
+      {realPosts.length > 0 && (
+        <section className="mb-10">
+          <h3 className="mb-3 flex items-center gap-2 text-[13px] uppercase tracking-[0.12em] text-black/40">
+            Per-post performance <LiveBadge />
+          </h3>
+          <div className="overflow-hidden rounded-2xl border border-black/10">
+            <table className="w-full text-left text-[14px]">
+              <thead className="bg-black/[0.02] text-[12px] uppercase tracking-wide text-black/40">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Post</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Views</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Likes</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {realPosts.map((p, i) => (
+                  <tr key={p.postizPostId || i} className="border-t border-black/5">
+                    <td className="max-w-[260px] truncate px-4 py-3 text-black/70">
+                      {p.caption || "Post"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {p.views != null ? fmt(p.views) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {p.likes != null ? fmt(p.likes) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {p.comments != null ? fmt(p.comments) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {persona?.contentPillars && persona.contentPillars.length > 0 && (
         <section className="mb-10">

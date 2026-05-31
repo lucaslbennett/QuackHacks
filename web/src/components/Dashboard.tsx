@@ -6,6 +6,11 @@ import {
   type ContentItem,
   type Influencer,
 } from "../lib/influencers";
+import {
+  getAllAnalytics,
+  getCachedAllAnalytics,
+  type AllAnalytics,
+} from "../lib/analytics";
 import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
 
@@ -16,13 +21,30 @@ interface DashboardProps {
   onHome?: () => void;
 }
 
+// Remembers the last dashboard sub-screen + open influencer across reloads.
+const SECTION_KEY = "qh.dashSection";
+const SELECTED_KEY = "qh.dashSelectedId";
+
 export default function Dashboard({ onCreate, onHome }: DashboardProps) {
   const { user } = useAuth();
   const name = user?.name || user?.email?.split("@")[0] || "there";
 
-  const [section, setSection] = useState<DashSection>("overview");
+  const [section, setSection] = useState<DashSection>(
+    () => (localStorage.getItem(SECTION_KEY) as DashSection) || "overview",
+  );
   const [influencers, setInfluencers] = useState<Influencer[]>([]);
   const [selected, setSelected] = useState<Influencer | null>(null);
+
+  // Persist the active section so a reload returns to the same tab.
+  useEffect(() => {
+    localStorage.setItem(SECTION_KEY, section);
+  }, [section]);
+
+  // Persist the open influencer's id (or clear it when none is open).
+  useEffect(() => {
+    if (selected) localStorage.setItem(SELECTED_KEY, selected.id);
+    else localStorage.removeItem(SELECTED_KEY);
+  }, [selected]);
 
   // Re-fetch whenever the signed-in user changes so data shows immediately
   // after login (the token isn't available until auth resolves).
@@ -33,7 +55,15 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     }
     let active = true;
     listMyInfluencers().then((list) => {
-      if (active) setInfluencers(list);
+      if (!active) return;
+      setInfluencers(list);
+      // Restore the previously-open influencer once the list is loaded, so a
+      // reload lands back on its detail page.
+      const savedId = localStorage.getItem(SELECTED_KEY);
+      if (savedId) {
+        const match = list.find((i) => i.id === savedId);
+        if (match) setSelected(match);
+      }
     });
     return () => {
       active = false;
@@ -552,23 +582,98 @@ function Sparkline() {
   );
 }
 
+// Compact number formatter for headline metrics (1.2K, 3.4M).
+function fmtNum(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 function Analytics() {
   const channels = [
     { label: "Instagram Reels", value: "62%", bar: 62 },
     { label: "TikTok", value: "24%", bar: 24 },
     { label: "YouTube Shorts", value: "14%", bar: 14 },
   ];
+
+  // Seed from cache so previous live totals show instantly on return.
+  const cached = getCachedAllAnalytics();
+  const [live, setLive] = useState<AllAnalytics | null>(cached);
+  const [loading, setLoading] = useState(!cached);
+
+  // Revalidate on mount (one server call). Only replace cached totals when the
+  // fresh result has real data, so a transient empty response doesn't blank it.
+  useEffect(() => {
+    let active = true;
+    if (!getCachedAllAnalytics()) setLoading(true);
+    getAllAnalytics()
+      .then((a) => {
+        if (!active) return;
+        setLive((prev) => (a.available || !prev ? a : prev));
+      })
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Headline totals: real values when Postiz returned them, demo values
+  // otherwise (per metric).
+  const t = live?.totals;
+  const headline = [
+    { label: "Followers", value: t?.followers ? fmtNum(t.followers) : "48.2K", live: !!t?.followers },
+    { label: "Total views", value: t?.views ? fmtNum(t.views) : "1.4M", live: !!t?.views },
+    { label: "Likes", value: t?.likes ? fmtNum(t.likes) : "92.6K", live: !!t?.likes },
+    { label: "Comments", value: t?.comments ? fmtNum(t.comments) : "5.3K", live: !!t?.comments },
+  ];
+
   return (
     <>
-      <h1
-        className="mb-2 text-[32px] leading-tight text-neutral-900 sm:text-[40px]"
-        style={{ fontFamily: "var(--font-heading)" }}
-      >
-        Analytics
-      </h1>
+      <div className="mb-2 flex items-center gap-3">
+        <h1
+          className="text-[32px] leading-tight text-neutral-900 sm:text-[40px]"
+          style={{ fontFamily: "var(--font-heading)" }}
+        >
+          Analytics
+        </h1>
+        {live?.available ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            Live
+          </span>
+        ) : (
+          <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] text-neutral-400">
+            {loading ? "Loading…" : "Demo data"}
+          </span>
+        )}
+      </div>
       <p className="mb-8 text-[15px] text-neutral-500">
         Reach and engagement across all your influencers.
       </p>
+
+      {/* Headline totals (live across all influencers when available) */}
+      <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {headline.map((m) => (
+          <div
+            key={m.label}
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 p-5"
+          >
+            <p className="flex items-center gap-1.5 text-[13px] text-neutral-500">
+              {m.label}
+              {m.live && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+            </p>
+            <p
+              className="mt-2 text-[26px] text-neutral-900 sm:text-[32px]"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              {m.value}
+            </p>
+          </div>
+        ))}
+      </section>
 
       <section className="mb-10 rounded-2xl border border-neutral-200 p-6">
         <div className="mb-1 flex items-end justify-between">

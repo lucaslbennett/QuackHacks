@@ -1,5 +1,6 @@
 import { Router } from "express";
 import * as repo from "../db/repo.js";
+import * as postiz from "../services/postiz.js";
 import { mediaUrl } from "../lib/util.js";
 import { requireAuth } from "../lib/auth.js";
 
@@ -93,6 +94,125 @@ router.get(
   })
 );
 
+// Pull the metrics we surface in the demo from a summarized Postiz analytics
+// map. Postiz labels vary by platform, so we look up a few likely keys per
+// metric and take the first that exists.
+const PICK = (summary, keys) => {
+  for (const k of keys) {
+    if (summary && summary[k] && typeof summary[k].value === "number") {
+      return summary[k].value;
+    }
+  }
+  return null;
+};
+
+// Computes one influencer's live analytics from Postiz: channel-level metrics
+// (followers, impressions) plus per-post metrics (likes, comments, views/
+// impressions) for each published Postiz post, and the summed totals. Best
+// effort: any Postiz call that fails is treated as "no data" (null) so the
+// caller can fall back to demo numbers per-metric rather than erroring.
+async function computeInfluencerAnalytics(influencer, days) {
+  const integrationId = influencer.postiz_integration_id;
+  const result = {
+    linked: Boolean(integrationId),
+    channel: null, // { followers, impressions }
+    posts: [], // [{ postizPostId, contentId, caption, likes, comments, views }]
+    totals: { likes: null, comments: null, views: null },
+    available: false, // true once any real metric came back
+  };
+  if (!postiz.isConfigured() || !integrationId) return result;
+
+  // Channel-level metrics.
+  try {
+    const ch = await postiz.getPlatformAnalytics(integrationId, { days });
+    result.channel = {
+      followers: PICK(ch, ["followers", "follower", "totalfollowers"]),
+      impressions: PICK(ch, ["impressions", "reach", "views", "totalimpressions"]),
+    };
+    if (result.channel.followers != null || result.channel.impressions != null) {
+      result.available = true;
+    }
+  } catch {
+    /* no channel data */
+  }
+
+  // Per-post metrics for each published Postiz post.
+  const posts = await repo.posts.listFor(influencer.id);
+  const postizPosts = posts.filter((p) => p.postiz_post_id);
+  let sumLikes = 0;
+  let sumComments = 0;
+  let sumViews = 0;
+  let anyPost = false;
+
+  for (const p of postizPosts) {
+    let metrics = {};
+    try {
+      metrics = await postiz.getPostAnalytics(p.postiz_post_id, { days });
+    } catch {
+      metrics = {};
+    }
+    const likes = PICK(metrics, ["likes", "like", "reactions"]);
+    const comments = PICK(metrics, ["comments", "comment", "replies"]);
+    const views = PICK(metrics, ["views", "impressions", "reach", "plays"]);
+    if (likes != null || comments != null || views != null) {
+      anyPost = true;
+      result.available = true;
+    }
+    if (likes != null) sumLikes += likes;
+    if (comments != null) sumComments += comments;
+    if (views != null) sumViews += views;
+    result.posts.push({
+      postizPostId: p.postiz_post_id,
+      contentId: p.content_id || null,
+      caption: p.caption || null,
+      likes,
+      comments,
+      views,
+    });
+  }
+
+  if (anyPost) {
+    result.totals = { likes: sumLikes, comments: sumComments, views: sumViews };
+  }
+  return result;
+}
+
+// Aggregate live analytics across ALL of the signed-in user's influencers, for
+// the main dashboard Analytics tab. MUST be declared before "/:id" so the
+// literal path wins over the dynamic param. Returns per-influencer summaries
+// plus grand totals. Graceful: missing/unlinked influencers contribute nulls.
+router.get(
+  "/analytics",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const days = Math.max(1, parseInt(req.query.days, 10) || 7);
+    const list = await repo.influencers.listForUser(req.user.id);
+    const perInfluencer = await Promise.all(
+      list.map(async (inf) => {
+        const a = await computeInfluencerAnalytics(inf, days);
+        return {
+          influencerId: inf.id,
+          name: inf.persona?.displayName || inf.name,
+          ...a,
+        };
+      })
+    );
+
+    // Grand totals across influencers (only counts real values).
+    const totals = { followers: 0, likes: 0, comments: 0, views: 0 };
+    let available = false;
+    for (const a of perInfluencer) {
+      if (a.available) available = true;
+      if (a.channel?.followers != null) totals.followers += a.channel.followers;
+      if (a.totals.likes != null) totals.likes += a.totals.likes;
+      if (a.totals.comments != null) totals.comments += a.totals.comments;
+      if (a.totals.views != null) totals.views += a.totals.views;
+    }
+
+    res.json({ ok: true, days, available, totals, influencers: perInfluencer });
+  })
+);
+
 // Create an influencer from the onboarding wizard. Optionally kicks off cloning.
 router.post(
   "/",
@@ -154,6 +274,22 @@ router.get(
       metrics,
       jobs,
     });
+  })
+);
+
+// Live analytics for one influencer from Postiz (channel + per-post + totals).
+// Used by the influencer page's Analytics tab. Falls back to nulls when the
+// influencer isn't linked or Postiz returns nothing, so the UI can show demo
+// numbers per-metric instead.
+router.get(
+  "/:id/analytics",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const influencer = await loadOwned(req, res);
+    if (!influencer) return;
+    const days = Math.max(1, parseInt(req.query.days, 10) || 7);
+    const analytics = await computeInfluencerAnalytics(influencer, days);
+    res.json({ ok: true, days, ...analytics });
   })
 );
 

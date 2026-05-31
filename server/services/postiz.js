@@ -102,6 +102,51 @@ export async function getConnectUrl(platform, { refresh } = {}) {
   return data.url;
 }
 
+// Postiz analytics endpoints return an array of metric series:
+//   [{ label: "Likes", data: [{ total: "150", date: "2025-01-01" }, ...],
+//      percentageChange: 16.7 }, ...]
+// This flattens one such series array into a simple { metricKey: { value,
+// change } } map using the latest (last) data point per label. Labels are
+// lowercased (e.g. "Followers" -> "followers", "Total Views" -> "totalviews").
+function summarizeAnalytics(series) {
+  const out = {};
+  if (!Array.isArray(series)) return out;
+  for (const s of series) {
+    const label = String(s?.label || "").trim();
+    if (!label) continue;
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const points = Array.isArray(s.data) ? s.data : [];
+    const last = points[points.length - 1];
+    const value = Number(last?.total ?? 0) || 0;
+    out[key] = {
+      label,
+      value,
+      change: typeof s.percentageChange === "number" ? s.percentageChange : null,
+    };
+  }
+  return out;
+}
+
+// Platform/channel analytics for an integration (followers, impressions, ...).
+// `days` is the look-back window (Postiz requires it). Returns a summarized map.
+export async function getPlatformAnalytics(integrationId, { days = 7 } = {}) {
+  if (!integrationId) throw new Error("integrationId is required");
+  const series = await postizFetch(
+    `/analytics/${encodeURIComponent(integrationId)}?date=${encodeURIComponent(days)}`
+  );
+  return summarizeAnalytics(series);
+}
+
+// Per-post analytics for a published Postiz post (likes, comments, ...).
+// Returns a summarized map. `days` is the look-back window.
+export async function getPostAnalytics(postId, { days = 7 } = {}) {
+  if (!postId) throw new Error("postId is required");
+  const series = await postizFetch(
+    `/analytics/post/${encodeURIComponent(postId)}?date=${encodeURIComponent(days)}`
+  );
+  return summarizeAnalytics(series);
+}
+
 // Asks Postiz for the next free posting slot for a channel (honours the
 // account's scheduling preferences). Returns an ISO date string or null.
 export async function findNextSlot(integrationId) {

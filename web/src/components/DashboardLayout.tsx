@@ -114,7 +114,12 @@ export default function DashboardLayout({
 
         <button
           type="button"
-          onClick={() => logout()}
+          onClick={async () => {
+            await logout();
+            // Return to the marketing home so a logged-out reload doesn't try to
+            // restore an empty dashboard.
+            onHome();
+          }}
           className="rounded-lg border border-neutral-200 px-3 py-2 text-[13px] text-neutral-600 transition-colors hover:bg-neutral-900 hover:text-white"
         >
           Log out

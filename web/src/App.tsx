@@ -7,12 +7,23 @@ import Dashboard from "./components/Dashboard";
 import Onboarding from "./components/Onboarding";
 import TestPanel from "./components/TestPanel";
 
+// Remembers whether the user was last on the dashboard, so a page reload
+// returns them to where they were instead of the marketing home.
+const DASH_KEY = "qh.showDashboard";
+
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
-  const [showDashboard, setShowDashboard] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(
+    () => localStorage.getItem(DASH_KEY) === "1",
+  );
   // null = closed; string (possibly empty) = onboarding open, seeded with the
   // text the user typed in the hero composer.
   const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
+
+  // Persist the home/dashboard choice across reloads.
+  useEffect(() => {
+    localStorage.setItem(DASH_KEY, showDashboard ? "1" : "0");
+  }, [showDashboard]);
 
   // Leaving onboarding simply unmounts it, which discards all in-progress
   // state (answers, generated character) since nothing is persisted until the
