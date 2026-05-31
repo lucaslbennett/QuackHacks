@@ -39,8 +39,8 @@ export const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "",
     model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
-    // Nano Banana Pro (Gemini 3 Pro Image) for image generation/editing.
-    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview",
+    // Nano Banana Pro (Gemini 3 Pro Image) for high-quality asset production.
+    imageModel: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image",
   },
 
   elevenlabs: {
@@ -48,14 +48,6 @@ export const config = {
     model: process.env.ELEVENLABS_MODEL || "eleven_multilingual_v2",
     // Optional default narrator voice id to fall back to.
     defaultVoiceId: process.env.ELEVENLABS_DEFAULT_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb",
-  },
-
-  fal: {
-    apiKey: process.env.FAL_KEY || process.env.FAL_API_KEY || "",
-    imageModel: process.env.FAL_IMAGE_MODEL || "fal-ai/flux/dev",
-    // Nano Banana (text-to-image) used for the onboarding character preview.
-    nanoBananaModel: process.env.FAL_NANO_BANANA_MODEL || "fal-ai/nano-banana",
-    videoModel: process.env.FAL_VIDEO_MODEL || "fal-ai/kling-video/v1.6/standard/image-to-video",
   },
 
   browserbase: {
@@ -213,7 +205,6 @@ export function missingKeys() {
   if (!config.databaseUrl) missing.push("DATABASE_URL");
   if (!config.gemini.apiKey) missing.push("GEMINI_API_KEY");
   if (!config.elevenlabs.apiKey) missing.push("ELEVENLABS_API_KEY");
-  if (!config.fal.apiKey) missing.push("FAL_KEY");
   if (!config.browserbase.apiKey) missing.push("BROWSERBASE_API_KEY");
   if (!config.browserbase.projectId) missing.push("BROWSERBASE_PROJECT_ID");
   return missing;

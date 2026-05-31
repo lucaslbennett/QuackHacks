@@ -3,65 +3,12 @@ import { useAuth } from "../lib/authContext";
 import { generateOnboardingCharacter, type Character } from "../lib/generate";
 import { launchInfluencer } from "../lib/influencers";
 
-// The scripted interview. Each question is asked as a chat bubble; the user can
-// tap a suggestion chip or type their own answer. `key` is what we send to the
-// model as the question label, `id` keys the answers map.
-interface Question {
-  id: string;
-  key: string;
-  prompt: string;
-  placeholder: string;
-  suggestions: string[];
-}
+const DESCRIPTION_KEY = "What niche or topic should your influencer cover?";
 
-const QUESTIONS: Question[] = [
-  {
-    id: "niche",
-    key: "What niche or topic should your influencer cover?",
-    prompt:
-      "Let's build your AI influencer. First — what's their world? Pick a niche or describe your own.",
-    placeholder: "e.g. minimalist home cooking",
-    suggestions: ["Fitness & wellness", "Tech & gadgets", "Travel", "Fashion & beauty"],
-  },
-  {
-    id: "audience",
-    key: "Who is the target audience?",
-    prompt: "Nice. Who are they posting for — who's the audience?",
-    placeholder: "e.g. busy professionals in their 30s",
-    suggestions: ["Gen Z", "Young professionals", "Parents", "Entrepreneurs"],
-  },
-  {
-    id: "vibe",
-    key: "What personality or vibe should they have?",
-    prompt: "What's their vibe? This shapes how they talk and look.",
-    placeholder: "e.g. warm, funny, a little chaotic",
-    suggestions: ["Calm & aspirational", "High-energy & funny", "Bold & edgy", "Cozy & relatable"],
-  },
-  {
-    id: "format",
-    key: "What kind of content should they post?",
-    prompt: "And what should they actually post? Pick the formats you want.",
-    placeholder: "e.g. quick tip reels and day-in-the-life vlogs",
-    suggestions: ["Talking-head reels", "Tutorials", "Day-in-the-life vlogs", "Product reviews"],
-  },
-  {
-    id: "look",
-    key: "Any preferences for how they look?",
-    prompt: "Last one — how should they look? Skip if you want me to decide.",
-    placeholder: "e.g. early 20s, warm smile, streetwear",
-    suggestions: ["You decide", "Polished & professional", "Natural & casual", "Trendy & stylish"],
-  },
-];
-
-type Phase = "chat" | "generating" | "reveal" | "error";
-
-interface ChatMessage {
-  from: "bot" | "user";
-  text: string;
-}
+type Phase = "brief" | "generating" | "reveal" | "error";
 
 const GENERATING_LINES = [
-  "Reading your answers…",
+  "Reading your brief…",
   "Designing the persona…",
   "Planning their content…",
   "Rendering the portrait with Nano Banana…",
@@ -76,30 +23,6 @@ interface OnboardingProps {
   onRequireSignIn: () => void;
 }
 
-// Builds the initial chat + answers when the hero seeds the first question.
-// The next bot question is returned separately as `pendingBot` so it can be
-// shown with a typing animation rather than appearing instantly.
-function initialState(seed?: string) {
-  const trimmed = seed?.trim();
-  if (!trimmed) {
-    return {
-      step: 0,
-      answers: {} as Record<string, string>,
-      messages: [] as ChatMessage[],
-      pendingBot: QUESTIONS[0].prompt,
-    };
-  }
-  return {
-    step: 1,
-    answers: { [QUESTIONS[0].key]: trimmed } as Record<string, string>,
-    messages: [
-      { from: "bot", text: QUESTIONS[0].prompt },
-      { from: "user", text: trimmed },
-    ] as ChatMessage[],
-    pendingBot: QUESTIONS[1].prompt,
-  };
-}
-
 export default function Onboarding({
   seed,
   onClose,
@@ -107,18 +30,12 @@ export default function Onboarding({
   onRequireSignIn,
 }: OnboardingProps) {
   const { user } = useAuth();
-  const [phase, setPhase] = useState<Phase>("chat");
-  const seeded = useRef(initialState(seed)).current;
-  const [step, setStep] = useState(seeded.step);
+  const initialBrief = useRef(seed?.trim() ?? "").current;
+  const [phase, setPhase] = useState<Phase>(initialBrief ? "generating" : "brief");
   const [answers, setAnswers] = useState<Record<string, string>>(
-    seeded.answers,
+    initialBrief ? { [DESCRIPTION_KEY]: initialBrief } : {},
   );
-  const [messages, setMessages] = useState<ChatMessage[]>(seeded.messages);
-  const [draft, setDraft] = useState("");
-  // A bot message waiting to be shown; while set (and `botTyping`), the chat
-  // displays a three-dot typing indicator before the message appears.
-  const [pendingBot, setPendingBot] = useState<string | null>(seeded.pendingBot);
-  const [botTyping, setBotTyping] = useState(false);
+  const [draft, setDraft] = useState(initialBrief);
 
   const [character, setCharacter] = useState<Character | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -132,32 +49,9 @@ export default function Onboarding({
   const [firstNameDraft, setFirstNameDraft] = useState("");
   const [lastNameDraft, setLastNameDraft] = useState("");
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   // Guards the auto-save so the generated influencer is persisted exactly once.
   const autoSaved = useRef(false);
-
-  // Keep the conversation pinned to the newest message and refocus the input.
-  useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-    if (phase === "chat") inputRef.current?.focus();
-  }, [messages, phase, botTyping]);
-
-  // When a bot message is queued, show the typing indicator for ~1s, then
-  // reveal the message. Mimics the AI "typing" before each question.
-  useEffect(() => {
-    if (pendingBot === null) return;
-    setBotTyping(true);
-    const timer = setTimeout(() => {
-      setMessages((m) => [...m, { from: "bot", text: pendingBot }]);
-      setPendingBot(null);
-      setBotTyping(false);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [pendingBot]);
+  const generationStarted = useRef(false);
 
   // Cycle the generating copy while we wait on the model.
   useEffect(() => {
@@ -182,28 +76,22 @@ export default function Onboarding({
     }
   }
 
-  function submitAnswer(value: string) {
-    // Ignore answers while the AI is still "typing" the current question.
-    if (botTyping || pendingBot !== null) return;
-    const answer = value.trim();
-    if (!answer) return;
-    const q = QUESTIONS[step];
-    const nextAnswers = { ...answers, [q.key]: answer };
-    const nextStep = step + 1;
+  // A prompt entered before this overlay opened can go straight to generation.
+  useEffect(() => {
+    if (!initialBrief || generationStarted.current) return;
+    generationStarted.current = true;
+    runGeneration({ [DESCRIPTION_KEY]: initialBrief });
+    // The seed is intentionally captured once when the overlay mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  function submitBrief() {
+    const brief = draft.trim();
+    if (!brief || generationStarted.current) return;
+    const nextAnswers = { [DESCRIPTION_KEY]: brief };
+    generationStarted.current = true;
     setAnswers(nextAnswers);
-    setDraft("");
-    setMessages((m) => [...m, { from: "user", text: answer }]);
-
-    // Queue the next bot line so it plays the typing animation before showing.
-    if (nextStep < QUESTIONS.length) {
-      setPendingBot(QUESTIONS[nextStep].prompt);
-      setStep(nextStep);
-    } else {
-      setPendingBot("Perfect. Bringing your influencer to life…");
-      setStep(nextStep);
-      runGeneration(nextAnswers);
-    }
+    runGeneration(nextAnswers);
   }
 
   // Launch the designed character as a real, user-owned influencer that lives in
@@ -214,7 +102,7 @@ export default function Onboarding({
   async function persist(toSave?: Character) {
     const subject = toSave ?? character;
     if (!imageUrl || !subject) return false;
-    // Carry the chat answers along so they're stored as the questionnaire.
+    // Carry the creation brief along so it is stored with the influencer.
     const characterWithAnswers = { ...subject, answers };
     setSaveState("saving");
     try {
@@ -283,108 +171,61 @@ export default function Onboarding({
     onComplete();
   }
 
-  const showSuggestions =
-    phase === "chat" &&
-    !botTyping &&
-    QUESTIONS[step]?.suggestions?.length > 0;
-
   return (
     <div className="fixed inset-0 z-[55] flex flex-col bg-white pt-20 text-black sm:pt-24">
-      {/* ---- Chat ---- */}
-      {phase === "chat" && (
-        <>
-          <div
-            ref={scrollRef}
-            className="mx-auto w-full max-w-xl flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-0"
+      {/* ---- Creation brief ---- */}
+      {phase === "brief" && (
+        <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-center justify-center px-5 pb-20 text-center sm:px-0">
+          <h2
+            className="mb-3 text-[30px] leading-tight sm:text-[40px]"
+            style={{ fontFamily: "var(--font-heading)" }}
           >
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={
-                  msg.from === "user" ? "flex justify-end" : "flex justify-start"
-                }
-              >
-                <div
-                  className={
-                    msg.from === "user"
-                      ? "max-w-[80%] rounded-2xl rounded-br-md bg-black px-4 py-2.5 text-[15px] text-white"
-                      : "max-w-[85%] rounded-2xl rounded-bl-md border border-black/10 bg-black/[0.03] px-4 py-2.5 text-[15px] text-black"
-                  }
-                  style={
-                    msg.from === "bot"
-                      ? { fontFamily: "var(--font-heading)", fontSize: "18px" }
-                      : undefined
-                  }
-                >
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-
-            {botTyping && (
-              <div className="flex justify-start">
-                <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-black/10 bg-black/[0.03] px-4 py-3.5">
-                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
-                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
-                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="mx-auto w-full max-w-xl shrink-0 px-5 pb-8 sm:px-0">
-            {showSuggestions && (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {QUESTIONS[step].suggestions.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => submitAnswer(s)}
-                    className="rounded-full border border-black/15 px-3.5 py-1.5 text-[13px] text-black/70 transition-colors duration-200 hover:bg-black hover:text-white"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitAnswer(draft);
-              }}
-              className="flex items-center gap-2 rounded-[28px] border border-black/10 bg-white px-2.5 py-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-shadow focus-within:shadow-[0_2px_18px_rgba(0,0,0,0.10)]"
+            Describe your influencer
+          </h2>
+          <p className="mb-8 max-w-lg text-[15px] leading-relaxed text-black/50">
+            Share the niche, personality, look, or content style you have in mind.
+            We&apos;ll handle the rest.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitBrief();
+            }}
+            className="flex w-full items-center gap-2 rounded-[28px] border border-black/10 bg-white px-2.5 py-2 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-shadow focus-within:shadow-[0_2px_18px_rgba(0,0,0,0.10)]"
+          >
+            <input
+              autoFocus
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="e.g. a warm, funny travel creator with a streetwear style"
+              className="min-w-0 flex-1 bg-transparent px-3 text-[15px] text-black placeholder-black/40 outline-none sm:text-[16px]"
+            />
+            <button
+              type="submit"
+              aria-label="Create influencer"
+              disabled={!draft.trim()}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition-opacity hover:opacity-80 disabled:opacity-30"
             >
-              <input
-                ref={inputRef}
-                type="text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={QUESTIONS[step]?.placeholder ?? "Type your answer…"}
-                className="min-w-0 flex-1 bg-transparent px-3 text-[15px] text-black placeholder-black/40 outline-none sm:text-[16px]"
-              />
-              <button
-                type="submit"
-                aria-label="Send"
-                disabled={!draft.trim()}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition-opacity hover:opacity-80 disabled:opacity-30"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path
-                    d="M12 19V5M12 5l-6 6M12 5l6 6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-            </form>
-            <p className="mt-2 text-center text-[12px] text-black/35">
-              Question {Math.min(step + 1, QUESTIONS.length)} of {QUESTIONS.length}
-            </p>
-          </div>
-        </>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M12 19V5M12 5l-6 6M12 5l6 6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </form>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-5 text-[13px] text-black/40 transition-colors hover:text-black"
+          >
+            Cancel
+          </button>
+        </div>
       )}
 
       {/* ---- Generating ---- */}

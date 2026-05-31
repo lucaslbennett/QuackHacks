@@ -6,17 +6,17 @@ account, and let it produce + post commentary-style reels on a randomized schedu
 while reporting its daily views and growth.
 
 Built for the hackathon on **Node.js + Express + Railway**, integrating
-**Google Gemini**, **ElevenLabs**, **fal.ai**, and **Browserbase Stagehand**.
+**Google Gemini**, **ElevenLabs**, and **Browserbase Stagehand**.
 
 ## What it does
 
-1. **Onboard** – questionnaire + links to existing influencer accounts to model from.
+1. **Create** – describe the influencer and optionally add existing accounts to model from.
 2. **Clone** – Stagehand scrapes the source profile(s); Gemini synthesizes a distinct
    persona (bio, voice style, visual style, content pillars) and an ElevenLabs voice is matched.
 3. **Spawn** – Stagehand auto-creates a fresh Instagram account, clearing email + SMS
    verification via pluggable providers (or manual code entry from the dashboard).
-4. **Generate** – Gemini writes a commentary script → ElevenLabs voices it → fal.ai
-   generates visuals → FFmpeg assembles a 9:16 reel with burned-in captions.
+4. **Generate** – Gemini writes a commentary script → ElevenLabs voices it → Gemini
+   Nano Banana generates B-roll stills → FFmpeg assembles a 9:16 reel with captions.
 5. **Post** – Stagehand logs in and publishes the reel with caption + hashtags at
    randomized human-like times.
 6. **Report** – Stagehand scrapes per-post views/likes and follower count into Postgres;
@@ -29,7 +29,7 @@ web/ (React + Vite + Tailwind dashboard)  ─┐
                                             │ served statically by
 server/ (Express API + cron + job runner) ─┘
   ├─ routes/        REST API
-  ├─ services/      gemini, elevenlabs, fal, video (ffmpeg), verification
+  ├─ services/      gemini, elevenlabs, video (ffmpeg), verification
   │   └─ browser/   Stagehand flows: scrape / create account / post / metrics
   ├─ jobs/          DB-backed queue (runner) + node-cron (scheduler) + pipeline
   └─ db/            Postgres pool, schema, repo

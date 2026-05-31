@@ -227,8 +227,7 @@ function ContentTab({
     setLoading(true);
     setError(null);
     try {
-      // Postiz owns the whole flow now: it renders the image, builds the caption
-      // from the persona, and publishes the post live to the linked channel.
+      // Generate the image + caption, then publish the post live through Postiz.
       const result = await publishViaPostiz(influencer.id);
       setPost(result);
       // Optimistically add the now-published post to the history list (it's
@@ -304,8 +303,8 @@ function ContentTab({
         <div className="rounded-2xl border border-dashed border-black/15 p-10 text-center">
           <p className="text-[14px] text-black/50">
             Generate a fresh post for {name} and publish it straight to
-            Instagram through Postiz — Postiz handles the photo, caption, and
-            posting. Each one is saved to this influencer's content below.
+            Instagram through Postiz. Each one is saved to this influencer's
+            content below.
           </p>
         </div>
       )}

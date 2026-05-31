@@ -40,9 +40,21 @@ app.use("/api/postiz", postizRoutes);
 // Serve the built dashboard if present; otherwise a minimal landing page.
 const webDist = path.join(rootDir, "web", "dist");
 if (existsSync(webDist)) {
-  app.use(express.static(webDist));
+  app.use(
+    express.static(webDist, {
+      setHeaders(res, filePath) {
+        if (path.basename(filePath) === "index.html") {
+          res.setHeader("Cache-Control", "no-store");
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    })
+  );
   app.get(/^\/(?!api|media|health).*/, (req, res) => {
-    res.sendFile(path.join(webDist, "index.html"));
+    res.sendFile(path.join(webDist, "index.html"), {
+      headers: { "Cache-Control": "no-store" },
+    });
   });
 } else {
   app.get("/", (req, res) => {
