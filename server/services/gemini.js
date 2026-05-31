@@ -250,22 +250,25 @@ Return JSON with this exact shape:
   return completeJson({ system, prompt, maxTokens: 2000 });
 }
 
-// Designs a persona + content plan straight from the onboarding chat answers
-// (no scraped sources). Returns a compact shape the onboarding UI renders.
-export async function designOnboardingCharacter({
-  answers,
-  suggestedLastName,
-}) {
-  log.info("Designing onboarding character");
-  const system =
-    "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
-    "From a few short onboarding answers you invent a complete, believable creator and the content they post. " +
-    "Be specific about who they are as a person; keep niche and aesthetic subtle in anything they would post publicly. " +
-    "Always respond with strict JSON only.";
+function onboardingNamingRules(suggestedLastName) {
+  return `Naming rules (IMPORTANT — read carefully):
+- The name must read like a REAL ORDINARY PERSON, not a brand or a username.
+- firstName: a common, real-world first name an actual person would have. If the
+  user already specified a first name in their answers, keep it; otherwise invent one.
+${
+  suggestedLastName
+    ? `- lastName: use "${suggestedLastName}" unless the user explicitly specified a different surname in their answers.`
+    : "- lastName: a real, common surname that a real family would have, drawn from a wide range of real-world origins."
+}
+- The last name MUST NOT be a pun, MUST NOT relate to the niche/topic, and MUST
+  NOT alliterate or rhyme with the first name. Bad: "Stacy Gains" (fitness pun),
+  "Mia Spice" (cooking pun), "Tara Travels". Good: "Stacy Nguyen", "Mia Okafor".
+- The first and last name should feel independent of each other and of the niche,
+  like two names picked at random from a real population.`;
+}
 
-  const prompt = `Design an AI influencer character from these onboarding answers.
-
-Onboarding answers (question -> answer):
+function onboardingAnswersBlock(answers) {
+  return `Onboarding answers (question -> answer):
 ${JSON.stringify(answers || {}, null, 2)}
 
 How to use the answers (IMPORTANT):
@@ -281,51 +284,117 @@ How to use the answers (IMPORTANT):
   person would. Example: if the audience is "Gen Z", use the slang, references,
   and tone Gen Z uses — without ever printing the words "Gen Z".
 - The bio and posts should read like a real human wrote them, not like a brief
-  that lists its own targeting parameters.
-
-${HUMAN_COPY_RULES}
-
-Naming rules (IMPORTANT — read carefully):
-- The name must read like a REAL ORDINARY PERSON, not a brand or a username.
-- firstName: a common, real-world first name an actual person would have. If the
-  user already specified a first name in their answers, keep it; otherwise invent one.
-${
-  suggestedLastName
-    ? `- lastName: use "${suggestedLastName}" unless the user explicitly specified a different surname in their answers.`
-    : "- lastName: a real, common surname that a real family would have, drawn from a wide range of real-world origins."
+  that lists its own targeting parameters.`;
 }
-- The last name MUST NOT be a pun, MUST NOT relate to the niche/topic, and MUST
-  NOT alliterate or rhyme with the first name. Bad: "Stacy Gains" (fitness pun),
-  "Mia Spice" (cooking pun), "Tara Travels". Good: "Stacy Nguyen", "Mia Okafor".
-- The first and last name should feel independent of each other and of the niche,
-  like two names picked at random from a real population.
+
+// Fast first pass: names + visual identity + portrait prompt. Kept small so image
+// generation can start while the richer content plan is still being written.
+export async function designOnboardingVisual({ answers, suggestedLastName }) {
+  log.info("Designing onboarding visual identity");
+  const system =
+    "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
+    "From a few short onboarding answers you invent a believable creator's identity and look. " +
+    "Always respond with strict JSON only.";
+
+  const prompt = `Design the identity and portrait direction for an AI influencer.
+
+${onboardingAnswersBlock(answers)}
+
+${onboardingNamingRules(suggestedLastName)}
 
 Return JSON with this exact shape:
 {
-  "firstName": string,              // a common, real first name (see naming rules)
-  "lastName": string,               // a real, common surname (see naming rules)
-  "displayName": string,            // exactly "{firstName} {lastName}", nothing else
+  "firstName": string,
+  "lastName": string,
+  "displayName": string,            // exactly "{firstName} {lastName}"
   "tagline": string,                // <= 60 chars; dry or blunt, NOT a poetic vibe summary
   "handleSuggestions": string[3],   // lowercase instagram handles, no spaces or @
   "niche": string,
-  "bio": string,                    // <= 150 chars; mundane/specific, max 1 emoji — see voice rules
-  "personality": string,            // 2-3 sentences, first impression of who they are
-  "appearance": string,             // vivid physical description for image generation; describe a conventionally attractive, photogenic person (symmetrical features, clear skin, flattering hair, appealing figure, tasteful style) while still feeling like a real, believable individual — not generic or plastic
+  "appearance": string,             // vivid physical description for image generation
   "aesthetic": string,              // visual mood: lighting, palette, vibe
-  "contentPillars": string[4],      // recurring topics they post about
-  "contentFormats": string[3],      // e.g. "talking-head reels", "day-in-the-life vlogs"
-  "typicalSettings": string[5],     // 5 realistic places she'd post from (varied; all on-brand for the niche, e.g. a gym girl: different gym, home kitchen, park run — NOT random unrelated locations)
-  "typicalOutfits": string[4],      // 4 realistic outfits she'd wear in posts (all on-brand; must make sense in the settings above)
-  "samplePosts": [                  // 3 concrete posts this character would publish
-    { "hook": string, "caption": string }  // captions: one thought/moment, not a niche mission statement
-  ],
-  "hashtagThemes": string[5],       // micro-niche hashtag inspiration for captions
-  "imagePrompt": string             // a single rich prompt describing the character's portrait; the person should look genuinely attractive and photogenic (the kind of good-looking creator who gains a following) while remaining a realistic, believable individual
+  "imagePrompt": string             // rich portrait prompt; photogenic but believable
 }`;
 
-  // Higher temperature so repeated identical onboarding answers still yield
-  // varied personas rather than collapsing to the same name/character.
-  return completeJson({ system, prompt, maxTokens: 2000, temperature: 1 });
+  return completeJson({ system, prompt, maxTokens: 900, temperature: 1 });
+}
+
+// Second pass: voice, content plan, and post examples. Runs in parallel with
+// portrait rendering once the visual identity exists.
+export async function designOnboardingPersonaDetails({ answers, visual }) {
+  log.info("Designing onboarding persona details");
+  const system =
+    "You are a brand strategist who designs hyper-realistic, legally-safe AI influencer personas. " +
+    "Given a creator's fixed identity, flesh out their voice and content plan. " +
+    "Always respond with strict JSON only.";
+
+  const prompt = `Flesh out the content plan for this AI influencer. Do NOT change their name or look.
+
+Identity (fixed):
+${JSON.stringify(
+  {
+    firstName: visual.firstName,
+    lastName: visual.lastName,
+    displayName: visual.displayName,
+    tagline: visual.tagline,
+    niche: visual.niche,
+    appearance: visual.appearance,
+    aesthetic: visual.aesthetic,
+  },
+  null,
+  2
+)}
+
+${onboardingAnswersBlock(answers)}
+
+${HUMAN_COPY_RULES}
+
+Return JSON with this exact shape:
+{
+  "bio": string,                    // <= 150 chars; mundane/specific, max 1 emoji
+  "personality": string,            // 2-3 sentences, first impression
+  "contentPillars": string[4],
+  "contentFormats": string[3],
+  "typicalSettings": string[5],
+  "typicalOutfits": string[4],
+  "samplePosts": [
+    { "hook": string, "caption": string }
+  ],
+  "hashtagThemes": string[5]
+}`;
+
+  return completeJson({ system, prompt, maxTokens: 1800, temperature: 1 });
+}
+
+// Portrait onboarding: visual identity first, then persona details + image in parallel.
+export async function designOnboardingCharacterWithImage({ answers, suggestedLastName }) {
+  log.info("Designing onboarding character with parallel portrait");
+  const visual = await designOnboardingVisual({ answers, suggestedLastName });
+  const imagePrompt =
+    visual.imagePrompt ||
+    [visual.appearance, visual.aesthetic].filter(Boolean).join(". ") ||
+    visual.displayName;
+
+  const [details, image] = await Promise.all([
+    designOnboardingPersonaDetails({ answers, visual }),
+    generateInfluencerImage({ prompt: imagePrompt }),
+  ]);
+
+  return {
+    character: { ...visual, ...details },
+    imageUrl: image.url,
+  };
+}
+
+// Designs a persona + content plan straight from the onboarding chat answers
+// (no scraped sources). Returns a compact shape the onboarding UI renders.
+export async function designOnboardingCharacter({
+  answers,
+  suggestedLastName,
+}) {
+  log.info("Designing onboarding character");
+  const visual = await designOnboardingVisual({ answers, suggestedLastName });
+  const details = await designOnboardingPersonaDetails({ answers, visual });
+  return { ...visual, ...details };
 }
 
 // Generates a commentary-style short-form video script in the persona's voice.

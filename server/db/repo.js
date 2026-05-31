@@ -124,6 +124,11 @@ export const influencers = {
       [id, ...keys.map((k) => fields[k])]
     );
   },
+  unlinkPostizIntegration: (integrationId) =>
+    query(
+      `UPDATE influencers SET postiz_integration_id = NULL, updated_at = now() WHERE postiz_integration_id = $1`,
+      [integrationId]
+    ),
   remove: (id) => query(`DELETE FROM influencers WHERE id=$1`, [id]),
 };
 

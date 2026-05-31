@@ -20,6 +20,8 @@ import {
   getPostizStatus,
   getPostizConnectUrl,
   listPostizChannels,
+  deletePostizChannel,
+  friendlyPostizError,
   type PostizChannel,
 } from "../lib/postiz";
 import {
@@ -333,7 +335,6 @@ export default function InfluencerPanel({
             setContent((c) => [item, ...c]);
           }}
           onContentSync={handleContentSync}
-          onConnectAccount={() => setTab("account")}
           onViewAnalytics={() => setTab("analytics")}
           onHandleSaved={(h) =>
             setInfluencer((inf) => ({ ...inf, handle: h || null }))
@@ -563,7 +564,6 @@ function ContentTab({
   content,
   onPosted,
   onContentSync,
-  onConnectAccount,
   onViewAnalytics,
   onHandleSaved,
 }: {
@@ -571,7 +571,6 @@ function ContentTab({
   content: ContentItem[];
   onPosted: (item: ContentItem) => void;
   onContentSync: (items: ContentItem[], influencer?: Influencer) => void;
-  onConnectAccount: () => void;
   onViewAnalytics: () => void;
   onHandleSaved: (handle: string) => void;
 }) {
@@ -761,7 +760,7 @@ function ContentTab({
           )}
         </p>
       )}
-      {scheduleSummary?.active && autopilotIssue && (
+      {scheduleSummary?.active && autopilotIssue && isLinked && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
           {autopilotIssue}
         </div>
@@ -778,21 +777,6 @@ function ContentTab({
       {error && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
           {error}
-        </div>
-      )}
-
-      {!isLinked && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
-          <span>
-            Connect an Instagram account to publish. It takes a few seconds.
-          </span>
-          <button
-            type="button"
-            onClick={onConnectAccount}
-            className="shrink-0 rounded-full bg-amber-600 px-4 py-1.5 text-[13px] font-medium text-white transition hover:bg-amber-700"
-          >
-            Connect Instagram
-          </button>
         </div>
       )}
 
@@ -1164,6 +1148,9 @@ function AutopilotPostHero({
 // the default. The FB-linked variant is offered as a fallback.
 const IG_STANDALONE = "instagram-standalone";
 const IG_FB_LINKED = "instagram";
+const IG_SIGNUP_DIRECT_URL = "https://www.instagram.com/accounts/emailsignup/";
+// Logged-in sessions skip the signup page — sign out in the new tab first, then land on sign-up.
+const IG_SIGNUP_LOGOUT_URL = `https://www.instagram.com/accounts/logout/?next=${encodeURIComponent("/accounts/emailsignup/")}`;
 
 function AccountTab({
   account,
@@ -1180,6 +1167,7 @@ function AccountTab({
   const [channels, setChannels] = useState<PostizChannel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [linkingId, setLinkingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // "Connecting…" while we wait for the OAuth popup + a new channel to appear.
   const [connecting, setConnecting] = useState(false);
@@ -1208,7 +1196,7 @@ function AccountTab({
     try {
       await fetchChannels();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load channels.");
+      setError(friendlyPostizError(e instanceof Error ? e.message : "Failed to load channels."));
       setStatus("error");
     } finally {
       setRefreshing(false);
@@ -1231,9 +1219,31 @@ function AccountTab({
       const result = await linkPostizChannel(influencer.id, channel.id, platform);
       onLinked(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to connect account.");
+      setError(friendlyPostizError(e instanceof Error ? e.message : "Failed to connect account."));
     } finally {
       setLinkingId(null);
+    }
+  };
+
+  const remove = async (channel: PostizChannel) => {
+    const handle = channel.profile || channel.name || "this account";
+    const ok = window.confirm(
+      `Remove @${handle} from Postiz?\n\nAny scheduled Postiz posts on this channel will be deleted. This cannot be undone.`,
+    );
+    if (!ok) return;
+
+    setRemovingId(channel.id);
+    setError(null);
+    try {
+      await deletePostizChannel(channel.id);
+      if (channel.id === linkedId) {
+        onLinked({ postiz_integration_id: null, postiz_platform: null });
+      }
+      await fetchChannels();
+    } catch (e) {
+      setError(friendlyPostizError(e instanceof Error ? e.message : "Failed to remove account."));
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -1289,14 +1299,14 @@ function AccountTab({
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't connect the account.");
+      setError(friendlyPostizError(e instanceof Error ? e.message : "Couldn't connect the account."));
     } finally {
       setConnecting(false);
     }
   };
 
   const linkedChannel = channels.find((c) => c.id === linkedId);
-  const busy = connecting || refreshing;
+  const busy = connecting || refreshing || removingId !== null;
 
   return (
     <section className="max-w-xl">
@@ -1451,7 +1461,15 @@ function AccountTab({
                           )}
                         </p>
                       </div>
-                      <div className="ml-auto">
+                      <div className="ml-auto flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => remove(c)}
+                          disabled={busy}
+                          className="rounded-full px-3 py-1.5 text-[13px] font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {removingId === c.id ? "Removing…" : "Remove"}
+                        </button>
                         {c.disabled ? (
                           // Expired/disabled channel: re-authorize it in place.
                           <button
@@ -1511,6 +1529,29 @@ function AccountTab({
                   ? "Connect another Instagram account"
                   : "Connect Instagram account"}
             </button>
+            <button
+              type="button"
+              onClick={() =>
+                window.open(IG_SIGNUP_LOGOUT_URL, "_blank", "noopener,noreferrer")
+              }
+              className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-black/15 px-5 py-3 text-[14px] font-medium text-black/80 transition hover:bg-black/[0.04]"
+            >
+              Create a new Instagram account
+            </button>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-black/40">
+              Opens sign-up in a new tab. If you&apos;re already signed in on Instagram,
+              that tab signs out first so you see the registration form. To keep your
+              current session, use a private/incognito window and open{" "}
+              <a
+                href={IG_SIGNUP_DIRECT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#5b73d6] hover:underline"
+              >
+                instagram.com/accounts/emailsignup
+              </a>
+              .
+            </p>
             {connecting && (
               <p className="mt-3 text-center text-[12px] text-black/50">
                 Finish signing in to Instagram in the popup. This page updates

@@ -1,5 +1,7 @@
 import { Router } from "express";
 import * as postiz from "../services/postiz.js";
+import * as repo from "../db/repo.js";
+import { requireAuth } from "../lib/auth.js";
 
 const router = Router();
 
@@ -69,6 +71,22 @@ router.get(
     const refresh = req.query.refresh ? String(req.query.refresh) : undefined;
     const url = await postiz.getConnectUrl(platform, { refresh });
     res.json({ ok: true, url, platform });
+  })
+);
+
+// Remove a connected channel from Postiz (frees a slot on limited plans).
+router.delete(
+  "/integrations/:id",
+  requireAuth,
+  asyncH(async (req, res) => {
+    if (!requireConfigured(res)) return;
+    const integrationId = String(req.params.id || "").trim();
+    if (!integrationId) {
+      return res.status(400).json({ ok: false, error: "integration id is required" });
+    }
+    await repo.influencers.unlinkPostizIntegration(integrationId);
+    const result = await postiz.deleteIntegration(integrationId);
+    res.json({ ok: true, id: result?.id || integrationId });
   })
 );
 

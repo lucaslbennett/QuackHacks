@@ -51,6 +51,16 @@ export async function listIntegrations() {
   return Array.isArray(data) ? data : data?.integrations || [];
 }
 
+// Removes a connected channel from Postiz (and its scheduled posts there).
+export async function deleteIntegration(integrationId) {
+  if (!integrationId) throw new Error("integrationId is required");
+  log.info(`Deleting Postiz integration ${integrationId}`);
+  const data = await postizFetch(`/integrations/${encodeURIComponent(integrationId)}`, {
+    method: "DELETE",
+  });
+  return data;
+}
+
 // Looks up a single connected channel by its Postiz integration id. Returns the
 // raw integration object (id, name, identifier, profile, picture, ...) or null
 // if no channel with that id is connected.

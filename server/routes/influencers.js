@@ -19,8 +19,10 @@ import { replanInfluencer, ensureAutopilotScheduleFor } from "../jobs/postingSch
 import { config } from "../config.js";
 import { computeLiveProfile } from "../lib/liveProfile.js";
 import { requireAuth } from "../lib/auth.js";
+import { createLogger } from "../lib/logger.js";
 
 const router = Router();
+const log = createLogger("influencers");
 
 const asyncH = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((err) =>
@@ -83,15 +85,16 @@ router.post(
       posting_schedule: buildDefaultAutopilotSchedule(influencer.id),
     });
 
-    // Move the onboarding portrait out of previews/ into this influencer's own
-    // media folder so post generation can reliably load it as a reference.
+    // Copy the portrait into the influencer media folder in the background so
+    // launch returns immediately (schedule assignment is instant — no replan here).
     if (imageUrl) {
-      const persistedUrl = await persistInfluencerProfileImage(influencer.id, imageUrl);
-      if (persistedUrl !== imageUrl) {
-        saved = await repo.influencers.update(influencer.id, {
-          image_url: persistedUrl,
-        });
-      }
+      void persistInfluencerProfileImage(influencer.id, imageUrl)
+        .then((persistedUrl) => {
+          if (persistedUrl && persistedUrl !== imageUrl) {
+            return repo.influencers.update(influencer.id, { image_url: persistedUrl });
+          }
+        })
+        .catch((err) => log.warn(`Background profile persist failed for ${influencer.id}:`, err));
     }
 
     res.status(201).json({ ok: true, influencer: saved });

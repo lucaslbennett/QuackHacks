@@ -66,3 +66,23 @@ export async function listPostizChannels(): Promise<PostizChannel[]> {
   }
   return (data.integrations as PostizChannel[]) || [];
 }
+
+// Removes a channel from Postiz. Any scheduled Postiz posts on that channel are
+// deleted too. Influencers linked to it are automatically unlinked in our DB.
+export async function deletePostizChannel(integrationId: string): Promise<void> {
+  const res = await fetch(`/api/postiz/integrations/${encodeURIComponent(integrationId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to remove channel (${res.status})`);
+  }
+}
+
+export function friendlyPostizError(message: string): string {
+  if (/maximum number of channels/i.test(message)) {
+    return "You've hit your Postiz channel limit. Remove an account below, then try connecting again.";
+  }
+  return message;
+}

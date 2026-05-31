@@ -58,16 +58,12 @@ router.post(
     // from a real list and suggested to the model.
     const suggestedLastName = pick(LAST_NAMES);
 
-    const character = await gemini.designOnboardingCharacter({ answers, suggestedLastName });
+    const { character, imageUrl } = await gemini.designOnboardingCharacterWithImage({
+      answers,
+      suggestedLastName,
+    });
 
-    const imagePrompt =
-      character.imagePrompt ||
-      [character.appearance, character.aesthetic].filter(Boolean).join(". ") ||
-      character.displayName;
-
-    const image = await gemini.generateInfluencerImage({ prompt: imagePrompt });
-
-    res.json({ ok: true, character, imageUrl: image.url });
+    res.json({ ok: true, character, imageUrl });
   })
 );
 
