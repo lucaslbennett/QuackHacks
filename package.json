@@ -18,7 +18,8 @@
     "probe:birthday": "node server/scripts/probeBirthday.js",
     "probe:capsolver": "node server/scripts/probeCapsolver.js",
     "probe:captcha": "node server/scripts/probeCaptchaOcr.js",
-    "probe:browseruse": "node server/scripts/probeBrowserUse.js"
+    "probe:browseruse": "node server/scripts/probeBrowserUse.js",
+    "probe:gemini": "node server/scripts/probeGemini.js"
   },
   "engines": {
     "node": ">=20.19"
