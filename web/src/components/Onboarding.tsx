@@ -126,6 +126,8 @@ export default function Onboarding({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Guards the auto-save so the generated influencer is persisted exactly once.
+  const autoSaved = useRef(false);
 
   // Keep the conversation pinned to the newest message and refocus the input.
   useEffect(() => {
@@ -189,48 +191,54 @@ export default function Onboarding({
     }
   }
 
-  async function handleSave() {
-    if (!imageUrl || !character) return;
+  // Persist the generated influencer. Returns true on success.
+  async function persist() {
+    if (!imageUrl || !character) return false;
+    setSaveState("saving");
+    try {
+      await saveGeneration(
+        character.imagePrompt || character.displayName,
+        imageUrl,
+        character,
+      );
+      setSaveState("saved");
+      return true;
+    } catch {
+      setSaveState("idle");
+      return false;
+    }
+  }
+
+  // Auto-save as soon as the influencer is generated, so it's kept even if the
+  // user never clicks through to the dashboard. Requires a signed-in user;
+  // otherwise saving is deferred until they sign in via the launch button.
+  useEffect(() => {
+    if (phase !== "reveal" || !user || autoSaved.current) return;
+    if (!character || !imageUrl) return;
+    autoSaved.current = true;
+    persist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, user, character, imageUrl]);
+
+  async function handleLaunch() {
     if (!user) {
       onRequireSignIn();
       return;
     }
-    setSaveState("saving");
-    try {
-      await saveGeneration(character.imagePrompt || character.displayName, imageUrl, character);
-      setSaveState("saved");
-      // Brief beat so the user sees the confirmation, then land on dashboard.
-      setTimeout(onComplete, 700);
-    } catch {
-      setSaveState("idle");
+    // Already auto-saved in the common case; save here only if it hasn't
+    // happened yet (e.g. the auto-save failed or the user just signed in).
+    if (saveState !== "saved") {
+      const ok = await persist();
+      if (!ok) return;
     }
+    onComplete();
   }
 
   const showSuggestions =
     phase === "chat" && QUESTIONS[step]?.suggestions?.length > 0;
 
   return (
-    <div className="fixed inset-0 z-[55] flex flex-col bg-white text-black">
-      {/* Top bar with a way out. */}
-      <div className="flex shrink-0 items-center justify-between px-5 pt-24 pb-2 sm:px-8">
-        <span />
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-black/15 text-black/50 transition-colors hover:bg-black hover:text-white"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <path
-              d="M1 1l12 12M13 1L1 13"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-
+    <div className="fixed inset-0 z-[55] flex flex-col bg-white pt-20 text-black sm:pt-24">
       {/* ---- Chat ---- */}
       {phase === "chat" && (
         <>
@@ -334,7 +342,7 @@ export default function Onboarding({
 
       {/* ---- Reveal ---- */}
       {phase === "reveal" && character && imageUrl && (
-        <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 pb-10 sm:px-0">
+        <div className="no-scrollbar mx-auto w-full max-w-4xl flex-1 overflow-y-auto px-5 pb-10 sm:px-0">
           <div className="flex flex-col items-center text-center">
             <div className="mb-5 w-full max-w-sm overflow-hidden rounded-2xl border border-black/10 shadow-[0_4px_24px_rgba(0,0,0,0.08)]">
               <img
@@ -367,20 +375,32 @@ export default function Onboarding({
 
           {/* What it will post */}
           <div className="mt-8 space-y-6 text-left">
-            {character.contentPillars?.length > 0 && (
-              <Section title="What they'll post about">
-                <div className="flex flex-wrap gap-2">
-                  {character.contentPillars.map((p) => (
-                    <span
-                      key={p}
-                      className="rounded-full border border-black/15 px-3.5 py-1.5 text-[13px] text-black/70"
-                    >
-                      {p}
-                    </span>
-                  ))}
-                </div>
+            {/* IG preview (left) alongside the content pillars (stacked, right). */}
+            <div className="grid gap-8 md:grid-cols-2 md:items-start">
+              <Section title="Instagram preview">
+                <InstagramProfile
+                  imageUrl={imageUrl}
+                  handle={character.handleSuggestions?.[0] || "ai.influencer"}
+                  displayName={character.displayName}
+                  bio={character.bio}
+                />
               </Section>
-            )}
+
+              {character.contentPillars?.length > 0 && (
+                <Section title="What they'll post about">
+                  <div className="flex flex-col gap-2">
+                    {character.contentPillars.map((p) => (
+                      <span
+                        key={p}
+                        className="rounded-full border border-black/15 px-3.5 py-1.5 text-center text-[13px] text-black/70"
+                      >
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                </Section>
+              )}
+            </div>
 
             {character.samplePosts?.length > 0 && (
               <Section title="Sample posts">
@@ -426,20 +446,23 @@ export default function Onboarding({
             </button>
             <button
               type="button"
-              onClick={handleSave}
-              disabled={saveState === "saving" || saveState === "saved"}
+              onClick={handleLaunch}
+              disabled={saveState === "saving"}
               className="rounded-full bg-black px-6 py-2.5 text-[14px] font-medium text-white transition-opacity duration-200 hover:opacity-80 disabled:opacity-60"
             >
-              {saveState === "saved"
-                ? "Saved ✓"
-                : saveState === "saving"
-                  ? "Saving…"
-                  : user
-                    ? "Launch on dashboard"
-                    : "Sign in to launch"}
+              {saveState === "saving"
+                ? "Saving…"
+                : !user
+                  ? "Sign in to launch"
+                  : "Go to dashboard"}
             </button>
           </div>
-          {!user && saveState === "idle" && (
+          {user && saveState === "saved" && (
+            <p className="mt-3 text-center text-[12px] text-black/40">
+              Saved to your dashboard ✓
+            </p>
+          )}
+          {!user && (
             <p className="mt-3 text-center text-[12px] text-black/40">
               You'll need an account to keep this influencer.
             </p>
@@ -483,6 +506,128 @@ function Section({
         {title}
       </h3>
       {children}
+    </div>
+  );
+}
+
+// Hardcoded sample stats so the model doesn't have to invent engagement
+// numbers; copied from the reference profile.
+const SAMPLE_STATS = {
+  posts: "2,470",
+  followers: "71.2k",
+  following: "2,552",
+};
+
+// A non-interactive mock of the top of an Instagram profile, styled after the
+// real app: story-ring avatar, handle + verified badge, post/follower/following
+// counts, display name, and bio. Content below the header is intentionally
+// omitted.
+function InstagramProfile({
+  imageUrl,
+  handle,
+  displayName,
+  bio,
+}: {
+  imageUrl: string;
+  handle: string;
+  displayName: string;
+  bio: string;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border border-black/10 bg-white shadow-[0_4px_24px_rgba(0,0,0,0.08)]">
+      {/* Top bar with handle + verified badge */}
+      <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
+        <span className="text-black/70" aria-hidden>
+          ‹
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[16px] font-semibold text-black">{handle}</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" aria-label="Verified">
+            <path
+              fill="#3897f0"
+              d="M12 1l2.6 2.1 3.3-.3 1.2 3.1 2.9 1.6-1 3.2 1 3.2-2.9 1.6-1.2 3.1-3.3-.3L12 23l-2.6-2.1-3.3.3-1.2-3.1L2 16.5l1-3.2-1-3.2 2.9-1.6 1.2-3.1 3.3.3z"
+            />
+            <path
+              fill="#fff"
+              d="M10.6 14.6l-2.3-2.3-1.1 1.1 3.4 3.4 6-6-1.1-1.1z"
+            />
+          </svg>
+        </div>
+        <span className="text-black/70" aria-hidden>
+          ⋯
+        </span>
+      </div>
+
+      <div className="px-4 py-4">
+        {/* Avatar + stats */}
+        <div className="flex items-center gap-5">
+          <div className="rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[2.5px]">
+            <div className="rounded-full bg-white p-[2px]">
+              <img
+                src={imageUrl}
+                alt={displayName}
+                className="h-[72px] w-[72px] rounded-full object-cover sm:h-[84px] sm:w-[84px]"
+              />
+            </div>
+          </div>
+          <div className="flex flex-1 justify-around text-center">
+            <div>
+              <p className="text-[17px] font-semibold text-black">
+                {SAMPLE_STATS.posts}
+              </p>
+              <p className="text-[13px] text-black/60">Posts</p>
+            </div>
+            <div>
+              <p className="text-[17px] font-semibold text-black">
+                {SAMPLE_STATS.followers}
+              </p>
+              <p className="text-[13px] text-black/60">Followers</p>
+            </div>
+            <div>
+              <p className="text-[17px] font-semibold text-black">
+                {SAMPLE_STATS.following}
+              </p>
+              <p className="text-[13px] text-black/60">Following</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Display name + bio */}
+        <div className="mt-3">
+          <p className="text-[14px] font-semibold text-black">{displayName}</p>
+          {bio && (
+            <p className="mt-0.5 whitespace-pre-line text-[14px] leading-snug text-black/80">
+              {bio}
+            </p>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            type="button"
+            disabled
+            className="flex-1 rounded-lg bg-[#0095f6] py-1.5 text-[14px] font-semibold text-white"
+          >
+            Follow
+          </button>
+          <button
+            type="button"
+            disabled
+            className="flex-1 rounded-lg bg-black/[0.06] py-1.5 text-[14px] font-semibold text-black"
+          >
+            Message
+          </button>
+          <button
+            type="button"
+            disabled
+            aria-label="Discover people"
+            className="rounded-lg bg-black/[0.06] px-3 py-1.5 text-[14px] font-semibold text-black"
+          >
+            +
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
