@@ -621,10 +621,10 @@ function Analytics() {
   // otherwise (per metric).
   const t = live?.totals;
   const headline = [
-    { label: "Followers", value: t?.followers ? fmtNum(t.followers) : "48.2K", live: !!t?.followers },
-    { label: "Total views", value: t?.views ? fmtNum(t.views) : "1.4M", live: !!t?.views },
-    { label: "Likes", value: t?.likes ? fmtNum(t.likes) : "92.6K", live: !!t?.likes },
-    { label: "Comments", value: t?.comments ? fmtNum(t.comments) : "5.3K", live: !!t?.comments },
+    { label: "Followers", value: fmtNum(t?.followers ?? 0), live: !!t?.followers },
+    { label: "Total views", value: fmtNum(t?.views ?? 0), live: !!t?.views },
+    { label: "Likes", value: fmtNum(t?.likes ?? 0), live: !!t?.likes },
+    { label: "Comments", value: fmtNum(t?.comments ?? 0), live: !!t?.comments },
   ];
 
   return (

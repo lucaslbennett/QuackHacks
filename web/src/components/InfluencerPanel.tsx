@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { publishViaPostiz, type PublishedPost } from "../lib/generate";
 import {
   getInfluencer,
@@ -21,33 +21,31 @@ import {
   type InfluencerAnalytics,
 } from "../lib/analytics";
 
-// Deterministic pseudo-random stats from the influencer id so each one shows
-// stable (but distinct) placeholder numbers until real metrics arrive.
-function seededStats(seed: string) {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const rand = () => {
-    h += 0x6d2b79f5;
-    let t = h;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  return {
-    followers: Math.floor(8_000 + rand() * 240_000),
-    posts: Math.floor(40 + rand() * 600),
-    engagement: (2 + rand() * 9).toFixed(1),
-    views: Math.floor(120_000 + rand() * 4_000_000),
-  };
-}
-
 function fmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+// Downloads an image to the user's device. Fetches it as a blob so cross-origin
+// images (e.g. CDN URLs) download instead of just navigating, then falls back to
+// opening in a new tab if the fetch is blocked.
+async function downloadImage(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const ext = blob.type.split("/")[1] || "png";
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = `${filename}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+  } catch {
+    window.open(url, "_blank", "noopener");
+  }
 }
 
 type Tab = "content" | "account" | "analytics";
@@ -74,7 +72,6 @@ export default function InfluencerPanel({
   const name = persona.displayName || influencer.name;
   const handle = persona.handleSuggestions?.[0] || influencer.handle;
   const niche = persona.niche || influencer.niche;
-  const stats = useMemo(() => seededStats(influencer.id), [influencer.id]);
 
   useEffect(() => {
     let active = true;
@@ -146,11 +143,25 @@ export default function InfluencerPanel({
       {/* Header: portrait + identity + status */}
       <section className="mb-8 flex flex-col gap-6 sm:flex-row sm:items-center">
         {influencer.image_url && (
-          <img
-            src={influencer.image_url}
-            alt={name}
-            className="h-32 w-32 shrink-0 rounded-2xl border border-black/10 object-cover sm:h-40 sm:w-40"
-          />
+          <div className="flex shrink-0 flex-col items-center gap-2">
+            <img
+              src={influencer.image_url}
+              alt={name}
+              className="h-32 w-32 rounded-2xl border border-black/10 object-cover sm:h-40 sm:w-40"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                downloadImage(
+                  influencer.image_url as string,
+                  `${(influencer.handle || name).replace(/[^a-z0-9]+/gi, "-")}-profile`,
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-full border border-black/15 px-3 py-1.5 text-[12px] font-medium text-black/70 transition hover:bg-black/5"
+            >
+              <span aria-hidden>↓</span> Download
+            </button>
+          </div>
         )}
         <div className="min-w-0">
           <div className="flex items-center gap-3">
@@ -302,7 +313,7 @@ export default function InfluencerPanel({
         />
       )}
       {tab === "analytics" && (
-        <AnalyticsTab influencer={influencer} stats={stats} persona={persona} />
+        <AnalyticsTab influencer={influencer} persona={persona} />
       )}
     </div>
   );
@@ -1084,11 +1095,9 @@ function LiveBadge() {
 
 function AnalyticsTab({
   influencer,
-  stats,
   persona,
 }: {
   influencer: Influencer;
-  stats: { followers: number; posts: number; engagement: string; views: number };
   persona: Influencer["persona"];
 }) {
   // Seed from cache so the previous live numbers show instantly when you return
@@ -1114,11 +1123,11 @@ function AnalyticsTab({
     };
   }, [influencer.id]);
 
-  // Per-metric: prefer the live value, fall back to the seeded demo number.
-  const followers = live?.channel?.followers ?? stats.followers;
-  const views = live?.totals.views ?? stats.views;
-  const comments = live?.totals.comments;
-  const likes = live?.totals.likes;
+  // Per-metric: show the live value when present, otherwise 0 (no placeholders).
+  const followers = live?.channel?.followers ?? 0;
+  const views = live?.totals.views ?? 0;
+  const comments = live?.totals.comments ?? 0;
+  const likes = live?.totals.likes ?? 0;
   const realPosts = live?.posts.filter(
     (p) => p.likes != null || p.comments != null || p.views != null,
   ) ?? [];
@@ -1126,18 +1135,8 @@ function AnalyticsTab({
   const cards = [
     { label: "Followers", value: fmt(followers), live: live?.channel?.followers != null },
     { label: "Total views", value: fmt(views), live: live?.totals.views != null },
-    {
-      label: "Comments",
-      value: comments != null ? fmt(comments) : `${stats.engagement}%`,
-      sub: comments != null ? undefined : "engagement",
-      live: comments != null,
-    },
-    {
-      label: "Likes",
-      value: likes != null ? fmt(likes) : String(stats.posts),
-      sub: likes != null ? undefined : "posts",
-      live: likes != null,
-    },
+    { label: "Comments", value: fmt(comments), live: live?.totals.comments != null },
+    { label: "Likes", value: fmt(likes), live: live?.totals.likes != null },
   ];
 
   return (
@@ -1176,11 +1175,6 @@ function AnalyticsTab({
             >
               {s.value}
             </p>
-            {s.sub && (
-              <p className="mt-0.5 text-[11px] capitalize text-black/30">
-                {s.sub}
-              </p>
-            )}
           </div>
         ))}
       </section>
