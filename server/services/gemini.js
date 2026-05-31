@@ -480,7 +480,7 @@ function imageGenerationError(err) {
 }
 
 // Generates an influencer image with Nano Banana Pro and saves it locally.
-// Returns { url, path }.
+// Returns { url, path, referenceUsed, referenceStatus, referenceUrl }.
 //
 // `referenceImage` is the influencer's saved profile photo, passed to the image
 // model as a SUBJECT reference so the generated person keeps the same identity
@@ -499,8 +499,12 @@ export async function generateInfluencerImage({
   const c = getClient();
   log.info("Generating Nano Banana image:", String(prompt).slice(0, 80));
 
+  const referenceUrl =
+    typeof referenceImage === "string" ? referenceImage : referenceImage ? "(preloaded)" : null;
+
   // Resolve the reference photo (if any) into inline base64 the model can read.
   let reference = null;
+  let referenceStatus = "not_requested";
   if (referenceImage) {
     reference =
       typeof referenceImage === "string"
@@ -508,9 +512,25 @@ export async function generateInfluencerImage({
         : referenceImage?.data
           ? referenceImage
           : null;
-    if (referenceImage && !reference) {
-      log.warn("reference image could not be loaded; generating without it");
+    if (reference) {
+      referenceStatus = "attached";
+      const byteLen = Buffer.byteLength(reference.data, "base64");
+      log.info(
+        "reference image ATTACHED to Gemini request:",
+        referenceUrl,
+        `mime=${reference.mimeType || "image/png"}`,
+        `bytes=${byteLen}`,
+        "contents=image+text"
+      );
+    } else {
+      referenceStatus = "load_failed";
+      log.warn(
+        "reference image FAILED to load; generating text-only (no inlineData):",
+        referenceUrl
+      );
     }
+  } else {
+    log.info("reference image not requested; generating text-only (no inlineData)");
   }
 
   const fullPrompt = buildInfluencerImagePrompt(prompt, {
@@ -558,5 +578,11 @@ export async function generateInfluencerImage({
     `${label}-${Date.now()}.png`
   );
   await writeFile(out, buffer);
-  return { url: mediaUrl(out), path: out };
+  return {
+    url: mediaUrl(out),
+    path: out,
+    referenceUsed: Boolean(reference),
+    referenceStatus,
+    referenceUrl,
+  };
 }

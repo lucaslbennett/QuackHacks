@@ -45,6 +45,10 @@ export interface GeneratedPost {
   copyText: string;
   // Set when the post was persisted to an influencer's content history.
   contentId: string | null;
+  // Whether the profile photo was loaded and sent to Gemini as inlineData.
+  referenceUsed?: boolean;
+  referenceStatus?: "attached" | "load_failed" | "not_requested";
+  referenceUrl?: string | null;
 }
 
 interface GenerateResponse {
@@ -149,6 +153,9 @@ export async function generatePost(input: {
     imagePrompt: data.imagePrompt ?? "",
     copyText: data.copyText ?? "",
     contentId: data.contentId ?? null,
+    referenceUsed: data.referenceUsed,
+    referenceStatus: data.referenceStatus,
+    referenceUrl: data.referenceUrl ?? null,
   };
 }
 
@@ -161,6 +168,9 @@ export interface PostPreview {
   hashtags: string[];
   hashtagLine: string;
   altText: string;
+  referenceUsed?: boolean;
+  referenceStatus?: "attached" | "load_failed" | "not_requested";
+  referenceUrl?: string | null;
 }
 
 // Auth required: generate a Nano Banana image + persona caption for an
@@ -185,6 +195,9 @@ export async function generatePostPreview(
     hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
     hashtagLine: data.hashtagLine ?? "",
     altText: data.altText ?? "",
+    referenceUsed: data.referenceUsed,
+    referenceStatus: data.referenceStatus,
+    referenceUrl: data.referenceUrl ?? null,
   };
 }
 

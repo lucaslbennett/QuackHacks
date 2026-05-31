@@ -183,6 +183,9 @@ router.post(
       altText: post.altText,
       imagePrompt,
       copyText,
+      referenceUsed: image.referenceUsed,
+      referenceStatus: image.referenceStatus,
+      referenceUrl: image.referenceUrl,
     });
   })
 );
@@ -288,6 +291,9 @@ router.post(
       hashtags: built.hashtags,
       hashtagLine,
       altText: built.altText,
+      referenceUsed: image.referenceUsed,
+      referenceStatus: image.referenceStatus,
+      referenceUrl: image.referenceUrl,
     });
   })
 );
