@@ -80,13 +80,16 @@ interface OnboardingProps {
 }
 
 // Builds the initial chat + answers when the hero seeds the first question.
+// The next bot question is returned separately as `pendingBot` so it can be
+// shown with a typing animation rather than appearing instantly.
 function initialState(seed?: string) {
   const trimmed = seed?.trim();
   if (!trimmed) {
     return {
       step: 0,
       answers: {} as Record<string, string>,
-      messages: [{ from: "bot", text: QUESTIONS[0].prompt }] as ChatMessage[],
+      messages: [] as ChatMessage[],
+      pendingBot: QUESTIONS[0].prompt,
     };
   }
   return {
@@ -95,8 +98,8 @@ function initialState(seed?: string) {
     messages: [
       { from: "bot", text: QUESTIONS[0].prompt },
       { from: "user", text: trimmed },
-      { from: "bot", text: QUESTIONS[1].prompt },
     ] as ChatMessage[],
+    pendingBot: QUESTIONS[1].prompt,
   };
 }
 
@@ -115,6 +118,10 @@ export default function Onboarding({
   );
   const [messages, setMessages] = useState<ChatMessage[]>(seeded.messages);
   const [draft, setDraft] = useState("");
+  // A bot message waiting to be shown; while set (and `botTyping`), the chat
+  // displays a three-dot typing indicator before the message appears.
+  const [pendingBot, setPendingBot] = useState<string | null>(seeded.pendingBot);
+  const [botTyping, setBotTyping] = useState(false);
 
   const [character, setCharacter] = useState<Character | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -136,7 +143,20 @@ export default function Onboarding({
       behavior: "smooth",
     });
     if (phase === "chat") inputRef.current?.focus();
-  }, [messages, phase]);
+  }, [messages, phase, botTyping]);
+
+  // When a bot message is queued, show the typing indicator for ~1s, then
+  // reveal the message. Mimics the AI "typing" before each question.
+  useEffect(() => {
+    if (pendingBot === null) return;
+    setBotTyping(true);
+    const timer = setTimeout(() => {
+      setMessages((m) => [...m, { from: "bot", text: pendingBot }]);
+      setPendingBot(null);
+      setBotTyping(false);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [pendingBot]);
 
   // Cycle the generating copy while we wait on the model.
   useEffect(() => {
@@ -162,6 +182,8 @@ export default function Onboarding({
   }
 
   function submitAnswer(value: string) {
+    // Ignore answers while the AI is still "typing" the current question.
+    if (botTyping || pendingBot !== null) return;
     const answer = value.trim();
     if (!answer) return;
     const q = QUESTIONS[step];
@@ -170,22 +192,14 @@ export default function Onboarding({
 
     setAnswers(nextAnswers);
     setDraft("");
-    setMessages((m) => {
-      const next: ChatMessage[] = [...m, { from: "user", text: answer }];
-      if (nextStep < QUESTIONS.length) {
-        next.push({ from: "bot", text: QUESTIONS[nextStep].prompt });
-      } else {
-        next.push({
-          from: "bot",
-          text: "Perfect. Bringing your influencer to life…",
-        });
-      }
-      return next;
-    });
+    setMessages((m) => [...m, { from: "user", text: answer }]);
 
+    // Queue the next bot line so it plays the typing animation before showing.
     if (nextStep < QUESTIONS.length) {
+      setPendingBot(QUESTIONS[nextStep].prompt);
       setStep(nextStep);
     } else {
+      setPendingBot("Perfect. Bringing your influencer to life…");
       setStep(nextStep);
       runGeneration(nextAnswers);
     }
@@ -235,7 +249,9 @@ export default function Onboarding({
   }
 
   const showSuggestions =
-    phase === "chat" && QUESTIONS[step]?.suggestions?.length > 0;
+    phase === "chat" &&
+    !botTyping &&
+    QUESTIONS[step]?.suggestions?.length > 0;
 
   return (
     <div className="fixed inset-0 z-[55] flex flex-col bg-white pt-20 text-black sm:pt-24">
@@ -269,6 +285,16 @@ export default function Onboarding({
                 </div>
               </div>
             ))}
+
+            {botTyping && (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-black/10 bg-black/[0.03] px-4 py-3.5">
+                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
+                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
+                  <span className="typing-dot h-2 w-2 rounded-full bg-black/40" />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mx-auto w-full max-w-xl shrink-0 px-5 pb-8 sm:px-0">
