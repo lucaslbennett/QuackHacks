@@ -115,6 +115,45 @@ export async function linkPostizChannel(
   };
 }
 
+// Auth required: update stored character fields (e.g. after renaming on reveal).
+export async function updateInfluencerCharacter(
+  influencerId: string,
+  character: Character,
+  answers?: Record<string, string>,
+): Promise<Influencer> {
+  const name = String(character.displayName || "").trim() || "My Influencer";
+  const handle = (character.handleSuggestions?.[0] || "").trim() || null;
+  const questionnaire = answers ?? character.answers ?? {};
+  const res = await fetch(`/api/influencers/${influencerId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      name,
+      handle: handle || null,
+      niche: character.niche || null,
+      persona: { ...character, answers: questionnaire },
+      questionnaire,
+    }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Failed to update influencer (${res.status})`);
+  }
+  return data.influencer as Influencer;
+}
+
+// Auth required: permanently delete an influencer and related content.
+export async function deleteInfluencer(influencerId: string): Promise<void> {
+  const res = await fetch(`/api/influencers/${influencerId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `Failed to delete influencer (${res.status})`);
+  }
+}
+
 // Auth required: update the influencer's Instagram @handle (display username).
 // The leading "@" is stripped so storage stays consistent. Returns the updated
 // influencer.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import LoadingBar, { useTimedLoadingProgress } from "./LoadingBar";
 import { useAuth } from "../lib/authContext";
 import { generateOnboardingCharacter, type Character } from "../lib/generate";
-import { launchInfluencer } from "../lib/influencers";
+import { launchInfluencer, updateInfluencerCharacter } from "../lib/influencers";
 
 const DESCRIPTION_KEY = "What niche or topic should your influencer cover?";
 
@@ -11,7 +12,7 @@ const GENERATING_LINES = [
   "Reading your brief…",
   "Designing the persona…",
   "Planning their content…",
-  "Rendering the portrait with Nano Banana…",
+  "Rendering the portrait with Nano Banana Pro…",
   "Adding the finishing touches…",
 ];
 
@@ -52,6 +53,11 @@ export default function Onboarding({
   // Guards the auto-save so the generated influencer is persisted exactly once.
   const autoSaved = useRef(false);
   const generationStarted = useRef(false);
+  const savedInfluencerId = useRef<string | null>(null);
+  const persistInFlight = useRef<Promise<boolean> | null>(null);
+  const { progress, finishing, completeProgress } = useTimedLoadingProgress(
+    phase === "generating",
+  );
 
   // Cycle the generating copy while we wait on the model.
   useEffect(() => {
@@ -67,6 +73,7 @@ export default function Onboarding({
     setPhase("generating");
     try {
       const result = await generateOnboardingCharacter(finalAnswers);
+      await completeProgress();
       setCharacter(result.character);
       setImageUrl(result.imageUrl);
       setPhase("reveal");
@@ -96,22 +103,40 @@ export default function Onboarding({
 
   // Launch the designed character as a real, user-owned influencer that lives in
   // the dashboard and can be managed (account setup, content, analytics).
-  // Accepts an explicit character so callers (e.g. saving a name edit) can
-  // launch with updated data without waiting for the async state update to
-  // flush. Returns true on success.
+  // Creates once, then PATCHes on subsequent saves (e.g. renaming).
   async function persist(toSave?: Character) {
     const subject = toSave ?? character;
     if (!imageUrl || !subject) return false;
-    // Carry the creation brief along so it is stored with the influencer.
-    const characterWithAnswers = { ...subject, answers };
-    setSaveState("saving");
-    try {
-      await launchInfluencer(characterWithAnswers, imageUrl);
+
+    const run = async () => {
+      const characterWithAnswers = { ...subject, answers };
+      if (savedInfluencerId.current) {
+        await updateInfluencerCharacter(
+          savedInfluencerId.current,
+          characterWithAnswers,
+          answers,
+        );
+      } else {
+        const influencer = await launchInfluencer(characterWithAnswers, imageUrl);
+        savedInfluencerId.current = influencer.id;
+      }
       setSaveState("saved");
       return true;
+    };
+
+    setSaveState("saving");
+    try {
+      if (persistInFlight.current) {
+        await persistInFlight.current;
+      }
+      const promise = run();
+      persistInFlight.current = promise;
+      return await promise;
     } catch {
-      setSaveState("idle");
+      setSaveState(savedInfluencerId.current ? "saved" : "idle");
       return false;
+    } finally {
+      persistInFlight.current = null;
     }
   }
 
@@ -127,7 +152,7 @@ export default function Onboarding({
   }
 
   // Applies the edited first/last name to the character, keeping displayName in
-  // sync, and re-persists if the influencer was already saved.
+  // sync, and updates the saved influencer (never creates a duplicate).
   function saveEditName() {
     if (!character) return;
     const first = firstNameDraft.trim();
@@ -142,8 +167,7 @@ export default function Onboarding({
     };
     setCharacter(updated);
     setEditingName(false);
-    // If we've already saved (auto-save on reveal), push the rename through.
-    if (user && saveState === "saved") persist(updated);
+    if (user) persist(updated);
   }
 
   // Auto-save as soon as the influencer is generated, so it's kept even if the
@@ -231,14 +255,18 @@ export default function Onboarding({
       {/* ---- Generating ---- */}
       {phase === "generating" && (
         <div className="flex flex-1 flex-col items-center justify-center px-5 text-center">
-          <div className="mb-8 h-10 w-10 animate-spin rounded-full border-2 border-black/15 border-t-black" />
-          <h2
-            className="mb-2 text-[26px] sm:text-[32px]"
-            style={{ fontFamily: "var(--font-heading)" }}
-          >
-            Creating your influencer
-          </h2>
-          <p className="text-[14px] text-black/50">{GENERATING_LINES[lineIdx]}</p>
+          <div className="w-full max-w-md">
+            <h2
+              className="mb-2 text-[26px] sm:text-[32px]"
+              style={{ fontFamily: "var(--font-heading)" }}
+            >
+              Creating your influencer
+            </h2>
+            <p className="mb-8 min-h-[1.25rem] text-[14px] text-black/50">
+              {GENERATING_LINES[lineIdx]}
+            </p>
+            <LoadingBar progress={progress} finishing={finishing} />
+          </div>
         </div>
       )}
 

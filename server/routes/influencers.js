@@ -321,6 +321,8 @@ router.patch(
       "voice_id",
       "postiz_integration_id",
       "postiz_platform",
+      "persona",
+      "questionnaire",
     ];
     const fields = {};
     for (const k of allowed) if (k in req.body) fields[k] = req.body[k];
@@ -331,7 +333,10 @@ router.patch(
 
 router.delete(
   "/:id",
+  requireAuth,
   asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
     await repo.influencers.remove(req.params.id);
     res.json({ ok: true });
   })

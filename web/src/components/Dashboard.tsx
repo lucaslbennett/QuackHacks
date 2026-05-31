@@ -81,6 +81,15 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
     setSelected(inf);
   };
 
+  const refreshInfluencers = () => {
+    listMyInfluencers().then(setInfluencers);
+  };
+
+  const handleInfluencerDeleted = () => {
+    setSelected(null);
+    refreshInfluencers();
+  };
+
   // The middle column lists the user's influencers and doubles as quick nav.
   const middleColumn = (
     <InfluencerList
@@ -110,7 +119,11 @@ export default function Dashboard({ onCreate, onHome }: DashboardProps) {
 
         {section === "influencers" &&
           (selected ? (
-            <InfluencerPanel influencer={selected} onBack={() => setSelected(null)} />
+            <InfluencerPanel
+              influencer={selected}
+              onBack={() => setSelected(null)}
+              onDeleted={handleInfluencerDeleted}
+            />
           ) : (
             <Influencers
               influencers={influencers}

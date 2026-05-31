@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import LoadingBar, { useTimedLoadingProgress } from "./LoadingBar";
 import { useAuth } from "../lib/authContext";
 import {
   generateInfluencerImage,
@@ -34,13 +35,17 @@ export default function GenerateScreen({
     "idle",
   );
   const startedRef = useRef(false);
+  const { progress, finishing, completeProgress } = useTimedLoadingProgress(
+    phase === "loading",
+  );
 
   // Kick off generation once (guard against StrictMode double-invoke).
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
     generateInfluencerImage(prompt)
-      .then(({ imageUrl }) => {
+      .then(async ({ imageUrl }) => {
+        await completeProgress();
         setImageUrl(imageUrl);
         setPhase("done");
       })
@@ -79,15 +84,17 @@ export default function GenerateScreen({
   return (
     <div className="fixed inset-0 z-[55] flex flex-col items-center justify-center bg-white px-5 pt-24 text-black">
       {phase === "loading" && (
-        <div className="flex flex-col items-center text-center">
-          <div className="mb-8 h-10 w-10 animate-spin rounded-full border-2 border-black/15 border-t-black" />
+        <div className="w-full max-w-md text-center">
           <h2
             className="mb-2 text-[26px] sm:text-[32px]"
             style={{ fontFamily: "var(--font-heading)" }}
           >
             Creating your influencer
           </h2>
-          <p className="text-[14px] text-black/50">{LOADING_LINES[lineIdx]}</p>
+          <p className="mb-8 min-h-[1.25rem] text-[14px] text-black/50">
+            {LOADING_LINES[lineIdx]}
+          </p>
+          <LoadingBar progress={progress} finishing={finishing} />
         </div>
       )}
 

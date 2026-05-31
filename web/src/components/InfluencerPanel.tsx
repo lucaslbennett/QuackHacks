@@ -6,6 +6,7 @@ import {
   type PublishedPost,
 } from "../lib/generate";
 import {
+  deleteInfluencer,
   getInfluencer,
   linkPostizChannel,
   unlinkPostizChannel,
@@ -59,9 +60,11 @@ type Tab = "content" | "account" | "analytics";
 export default function InfluencerPanel({
   influencer: initial,
   onBack,
+  onDeleted,
 }: {
   influencer: Influencer;
   onBack: () => void;
+  onDeleted?: () => void;
 }) {
   // The list row is the seed; we fetch the full detail (account/content/metrics).
   const [influencer, setInfluencer] = useState<Influencer>(initial);
@@ -73,6 +76,8 @@ export default function InfluencerPanel({
   // header link bar and the Account tab can resolve the linked account's handle.
   const [channels, setChannels] = useState<PostizChannel[]>([]);
   const [unlinking, setUnlinking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const persona = influencer.persona || {};
   const name = persona.displayName || influencer.name;
@@ -130,6 +135,22 @@ export default function InfluencerPanel({
       );
     } finally {
       setUnlinking(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setLoadErr(null);
+    try {
+      await deleteInfluencer(influencer.id);
+      onDeleted?.();
+    } catch (e) {
+      setLoadErr(
+        e instanceof Error ? e.message : "Couldn't delete this influencer.",
+      );
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -323,6 +344,44 @@ export default function InfluencerPanel({
       {tab === "analytics" && (
         <AnalyticsTab influencer={influencer} persona={persona} />
       )}
+
+      <section className="mt-12 rounded-2xl border border-black/10 p-6">
+        <h3 className="text-[13px] uppercase tracking-[0.12em] text-black/40">
+          Danger zone
+        </h3>
+        <p className="mt-2 max-w-lg text-[14px] leading-relaxed text-black/55">
+          Permanently delete {name} and all of their generated posts. This cannot
+          be undone.
+        </p>
+        {confirmDelete ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-full bg-red-600 px-5 py-2 text-[13px] font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+            >
+              {deleting ? "Deleting…" : "Yes, delete permanently"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+              className="rounded-full border border-black/15 px-5 py-2 text-[13px] text-black/70 transition hover:bg-black/[0.04] disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="mt-4 rounded-full border border-black/15 px-5 py-2 text-[13px] font-medium text-black/70 transition hover:border-red-300 hover:text-red-600"
+          >
+            Delete influencer
+          </button>
+        )}
+      </section>
     </div>
   );
 }
