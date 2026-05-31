@@ -129,20 +129,18 @@ export function buildInfluencerImagePrompt(
   const style = amateurPhotoStyle({ selfie, hasReference });
   if (hasReference) {
     return (
-      "The provided reference photo IS the person. Take their entire physical " +
-      "appearance wholesale from that image — facial structure, every facial " +
-      "feature, skin tone and complexion, hair, body type, and all " +
-      "distinguishing marks — and reproduce it faithfully. This is the SAME real " +
-      "individual, not a lookalike: a stranger comparing the two photos should " +
-      "have zero doubt it is the same person. Do NOT redesign, beautify, " +
-      "lighten, darken, slim, age, or otherwise change how they look in any way; " +
-      "your only job for the person is to carry their exact appearance over " +
-      "unchanged. Copy face, skin, hair, and body from the reference. Do NOT " +
-      "copy the reference photo's clothing, background, or location — use the " +
-      "scene description for outfit and setting instead. The text below " +
-      "describes ONLY the new photo's scene and how it is shot — never how the " +
-      "person looks. Generate a NEW candid photo of this exact person in which " +
-      "only the setting, pose, outfit, expression, and lighting differ. " +
+      "The provided reference photo IS the person. Copy her identity from the " +
+      "reference only: facial structure, every facial feature, skin tone and " +
+      "complexion, hair, body type and build, and distinguishing marks — " +
+      "reproduce these faithfully. This is the SAME real individual, not a " +
+      "lookalike: a stranger comparing the two photos should have zero doubt it " +
+      "is the same person. Do NOT redesign, beautify, lighten, darken, slim, " +
+      "age, or otherwise change who she is. Do NOT copy the reference photo's " +
+      "clothing, background, location, pose, body position, camera angle, crop, " +
+      "or expression — use the scene description for outfit, setting, pose, and " +
+      "action instead. The text below describes ONLY the new photo's scene and " +
+      "how it is shot — never how the person looks. Generate a NEW candid photo " +
+      "of this exact person in a fresh pose and framing. " +
       style +
       ` Scene for this new photo: ${description}`
     );
