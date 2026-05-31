@@ -6,6 +6,8 @@ import {
   nextRandomSlot,
   formatScheduleSummary,
   renderLeadMs,
+  isScheduleUnconfigured,
+  buildDefaultAutopilotSchedule,
 } from "../lib/schedule.js";
 import { createLogger } from "../lib/logger.js";
 
@@ -22,14 +24,28 @@ async function hasActiveAutoJob(influencerId) {
   return repo.jobs.hasActive(influencerId, AUTO_JOB);
 }
 
+// Assign the default enabled fixed schedule when none has been saved yet.
+export async function ensureAutopilotScheduleFor(influencer) {
+  const raw = influencer.posting_schedule || {};
+  if (!isScheduleUnconfigured(raw)) {
+    return { schedule: normalizeSchedule(raw), updated: false };
+  }
+  const schedule = buildDefaultAutopilotSchedule(influencer.id);
+  await repo.influencers.update(influencer.id, { posting_schedule: schedule });
+  log.info(`Assigned default autopilot schedule for ${influencer.id} (${schedule.times.join(", ")} ${schedule.timezone})`);
+  return { schedule, updated: true };
+}
+
 // Enqueues generate+schedule jobs from the influencer's posting_schedule config.
 // `force` clears pending jobs and replans (user saved schedule). Without force,
 // skips when a pending/running autopilot job already exists so the 5-minute cron
 // does not endlessly delete and reschedule jobs before they can run.
 export async function replanInfluencer(influencerId, { force = false } = {}) {
-  const influencer = await repo.influencers.get(influencerId);
+  let influencer = await repo.influencers.get(influencerId);
   if (!influencer) throw new Error("influencer not found");
 
+  await ensureAutopilotScheduleFor(influencer);
+  influencer = await repo.influencers.get(influencerId);
   const schedule = normalizeSchedule(influencer.posting_schedule);
 
   if (!schedule.enabled) {

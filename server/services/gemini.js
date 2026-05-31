@@ -244,11 +244,7 @@ Return JSON with this exact shape:
     "wardrobe": string
   },
   "contentPillars": string[4],       // recurring topics to post about
-  "postingStrategy": {
-    "postsPerDay": number,
-    "bestTimes": string[],
-    "hashtagThemes": string[]
-  }
+  "hashtagThemes": string[6]          // micro-niche hashtag inspiration for captions
 }`;
 
   return completeJson({ system, prompt, maxTokens: 2000 });
@@ -323,11 +319,7 @@ Return JSON with this exact shape:
   "samplePosts": [                  // 3 concrete posts this character would publish
     { "hook": string, "caption": string }  // captions: one thought/moment, not a niche mission statement
   ],
-  "postingStrategy": {
-    "postsPerDay": number,
-    "bestTimes": string[],
-    "hashtagThemes": string[]
-  },
+  "hashtagThemes": string[5],       // micro-niche hashtag inspiration for captions
   "imagePrompt": string             // a single rich prompt describing the character's portrait; the person should look genuinely attractive and photogenic (the kind of good-looking creator who gains a following) while remaining a realistic, believable individual
 }`;
 
@@ -520,7 +512,9 @@ function sceneOptionsFromPersona(persona) {
 // Slim context for post generation — voice and scene lists only, no appearance text.
 function postContextFromPersona(persona) {
   const { settings, outfits } = sceneOptionsFromPersona(persona);
-  const themes = persona?.postingStrategy?.hashtagThemes;
+  const themes =
+    persona?.hashtagThemes ??
+    persona?.postingStrategy?.hashtagThemes;
   return {
     displayName: persona?.displayName,
     niche: persona?.niche, // scene/outfit logic only — do not echo in caption

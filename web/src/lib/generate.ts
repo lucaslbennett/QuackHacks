@@ -75,14 +75,37 @@ export interface Character {
   typicalSettings?: string[];
   typicalOutfits?: string[];
   samplePosts: { hook: string; caption: string }[];
-  postingStrategy: {
-    postsPerDay: number;
-    bestTimes: string[];
-    hashtagThemes: string[];
+  hashtagThemes?: string[];
+  /** @deprecated Cadence is managed by autopilot schedule, not persona AI fields. */
+  postingStrategy?: {
+    hashtagThemes?: string[];
+    postsPerDay?: number;
+    bestTimes?: string[];
   };
   imagePrompt: string;
   // The raw creation brief, carried through when launching.
   answers?: Record<string, string>;
+  // Snapshot of AI fields at launch — used by Customize → Reset to defaults.
+  personaDefaults?: Partial<Character>;
+  // Clone-persona visual fields (optional).
+  visualStyle?: {
+    appearance?: string;
+    aesthetic?: string;
+    settings?: string[];
+    wardrobe?: string | string[];
+  };
+  voiceStyle?: {
+    tone?: string;
+    pacing?: string;
+    catchphrases?: string[];
+    vocabulary?: string;
+  };
+  voiceCasting?: {
+    gender?: string;
+    age?: string;
+    accent?: string;
+    energy?: string;
+  };
 }
 
 interface OnboardingResponse {

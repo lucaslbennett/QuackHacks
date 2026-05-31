@@ -185,7 +185,7 @@ export async function linkPostizChannel(
   influencerId: string,
   integrationId: string,
   platform = "instagram",
-): Promise<{ postiz_integration_id: string; postiz_platform: string }> {
+): Promise<Influencer> {
   const res = await fetch(`/api/influencers/${influencerId}/postiz`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -195,10 +195,7 @@ export async function linkPostizChannel(
   if (!res.ok || data.ok === false || !data.influencer) {
     throw new Error(data.error || `Failed to link channel (${res.status})`);
   }
-  return {
-    postiz_integration_id: data.influencer.postiz_integration_id,
-    postiz_platform: data.influencer.postiz_platform,
-  };
+  return data.influencer as Influencer;
 }
 
 // Auth required: update stored character fields (e.g. after renaming on reveal).
@@ -224,6 +221,43 @@ export async function updateInfluencerCharacter(
   const data = await res.json().catch(() => ({ ok: false }));
   if (!res.ok || data.ok === false || !data.influencer) {
     throw new Error(data.error || `Failed to update influencer (${res.status})`);
+  }
+  return data.influencer as Influencer;
+}
+
+// Auth required: save edited persona / AI customization fields.
+export async function updateInfluencerPersona(
+  influencerId: string,
+  persona: Influencer["persona"],
+  opts?: { name?: string; niche?: string | null; handle?: string | null },
+): Promise<Influencer> {
+  const displayName = String(persona.displayName || opts?.name || "").trim();
+  const res = await fetch(`/api/influencers/${influencerId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      ...(displayName ? { name: displayName } : {}),
+      ...(opts?.niche !== undefined ? { niche: opts.niche } : {}),
+      ...(opts?.handle !== undefined ? { handle: opts.handle } : {}),
+      persona,
+    }),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Failed to save customization (${res.status})`);
+  }
+  return data.influencer as Influencer;
+}
+
+// Auth required: restore persona AI fields to launch defaults (or regenerate).
+export async function resetInfluencerPersona(influencerId: string): Promise<Influencer> {
+  const res = await fetch(`/api/influencers/${influencerId}/persona/reset`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.influencer) {
+    throw new Error(data.error || `Failed to reset persona (${res.status})`);
   }
   return data.influencer as Influencer;
 }

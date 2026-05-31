@@ -29,7 +29,7 @@ import {
   type InfluencerAnalytics,
 } from "../lib/analytics";
 import InfluencerImage from "./InfluencerImage";
-import PostingScheduleModal from "./PostingScheduleModal";
+import InfluencerCustomizeTab from "./InfluencerCustomizeTab";
 import type { PostingScheduleSummary } from "../lib/influencers";
 import { postTimeCaption, latestAutopilotContent, autopilotStatusLabel, hashtagLine } from "../lib/postTime";
 
@@ -60,7 +60,7 @@ async function downloadImage(url: string, filename: string) {
   }
 }
 
-type Tab = "content" | "account" | "analytics";
+type Tab = "content" | "account" | "analytics" | "customize";
 
 export default function InfluencerPanel({
   influencer: initial,
@@ -126,15 +126,8 @@ export default function InfluencerPanel({
   }, []);
 
   // Applied when a channel is linked/changed (from the Account tab or the bar).
-  const applyLink = (link: {
-    postiz_integration_id: string | null;
-    postiz_platform: string | null;
-  }) => {
-    setInfluencer((inf) => ({
-      ...inf,
-      postiz_integration_id: link.postiz_integration_id,
-      postiz_platform: link.postiz_platform,
-    }));
+  const applyLink = (linked: Partial<Influencer>) => {
+    setInfluencer((inf) => ({ ...inf, ...linked }));
   };
 
   // Remove the currently linked account.
@@ -312,6 +305,7 @@ export default function InfluencerPanel({
           [
             ["content", "Content & posting"],
             ["analytics", "Analytics"],
+            ["customize", "Customize"],
             ["account", "Account setup"],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -353,6 +347,12 @@ export default function InfluencerPanel({
             applyLink(link);
             loadChannels();
           }}
+        />
+      )}
+      {tab === "customize" && (
+        <InfluencerCustomizeTab
+          influencer={influencer}
+          onSaved={(inf) => setInfluencer(inf)}
         />
       )}
       {tab === "analytics" && (
@@ -520,6 +520,28 @@ function EditableHandle({
 
 /* ---------------- Content & posting ---------------- */
 
+function scheduleSummaryFromPostingSchedule(
+  s: Influencer["posting_schedule"],
+): PostingScheduleSummary | null {
+  if (!s?.enabled) return null;
+  return {
+    active: true,
+    mode: s.mode === "random" ? "random" : "fixed",
+    summary:
+      s.mode === "random"
+        ? s.intervalMinutes === 5
+          ? "Every ~5 min"
+          : s.intervalMinutes === 60
+            ? "Every ~1h"
+            : s.intervalMinutes === 1440
+              ? "Every ~24h"
+              : `Every ~${(s.intervalMinutes ?? 360) / 60}h`
+        : `Daily at ${(s.times || []).join(" & ")}`,
+    nextRunAt: s.nextRunAt,
+    intervalMinutes: s.intervalMinutes,
+  };
+}
+
 function ContentTab({
   influencer,
   content,
@@ -545,34 +567,17 @@ function ContentTab({
   const [error, setError] = useState<string | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
   const [autopilotIssue, setAutopilotIssue] = useState<string | null>(null);
-  const [scheduleSummary, setScheduleSummary] = useState<PostingScheduleSummary | null>(
-    () => {
-      const s = influencer.posting_schedule;
-      if (s?.enabled) {
-        return {
-          active: true,
-          mode: s.mode === "random" ? "random" : "fixed",
-          summary:
-            s.mode === "random"
-              ? s.intervalMinutes === 5
-                ? "Every ~5 min"
-                : s.intervalMinutes === 60
-                  ? "Every ~1h"
-                  : s.intervalMinutes === 1440
-                    ? "Every ~24h"
-                    : `Every ~${(s.intervalMinutes ?? 360) / 60}h`
-              : `Daily at ${(s.times || []).join(" & ")}`,
-          nextRunAt: s.nextRunAt,
-          intervalMinutes: s.intervalMinutes,
-        };
-      }
-      return null;
-    },
+  const [scheduleSummary, setScheduleSummary] = useState<PostingScheduleSummary | null>(() =>
+    scheduleSummaryFromPostingSchedule(influencer.posting_schedule),
   );
   const name = influencer.persona?.displayName || influencer.name;
   const isLinked = Boolean(influencer.postiz_integration_id);
   const latestAutopilot = useMemo(() => latestAutopilotContent(content), [content]);
   const manualFlowActive = Boolean(preview || post || loading);
+
+  useEffect(() => {
+    setScheduleSummary(scheduleSummaryFromPostingSchedule(influencer.posting_schedule));
+  }, [influencer.id, influencer.posting_schedule]);
 
   // Poll while autopilot is on so the hero updates when a new post is generated.
   useEffect(() => {

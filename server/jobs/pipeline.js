@@ -53,7 +53,7 @@ export async function clonePersona({ influencerId }) {
     voice_id: voiceId || null,
     niche: persona.niche || influencer.niche,
     handle: persona.handleSuggestions?.[0] || influencer.handle,
-    posts_per_day: persona.postingStrategy?.postsPerDay || influencer.posts_per_day,
+    posts_per_day: 2,
     status: "ready",
   });
 

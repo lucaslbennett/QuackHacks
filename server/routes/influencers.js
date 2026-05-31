@@ -2,8 +2,20 @@ import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as postiz from "../services/postiz.js";
 import { mediaUrl, persistInfluencerProfileImage } from "../lib/util.js";
-import { validateScheduleInput, formatScheduleSummary, normalizeSchedule } from "../lib/schedule.js";
-import { replanInfluencer } from "../jobs/postingSchedule.js";
+import {
+  mergePersonaUpdate,
+  personaWithDefaults,
+  snapshotPersonaDefaults,
+} from "../lib/persona.js";
+import * as gemini from "../services/gemini.js";
+import {
+  validateScheduleInput,
+  formatScheduleSummary,
+  normalizeSchedule,
+  buildDefaultAutopilotSchedule,
+  DEFAULT_POSTS_PER_DAY,
+} from "../lib/schedule.js";
+import { replanInfluencer, ensureAutopilotScheduleFor } from "../jobs/postingSchedule.js";
 import { config } from "../config.js";
 import { computeLiveProfile } from "../lib/liveProfile.js";
 import { requireAuth } from "../lib/auth.js";
@@ -54,19 +66,21 @@ router.post(
 
     const name = String(character.displayName || "").trim() || "My Influencer";
     const handle = (character.handleSuggestions?.[0] || "").trim() || null;
-    const postsPerDay = Number(character.postingStrategy?.postsPerDay) || 2;
-
     const influencer = await repo.influencers.create({
       userId: req.user.id,
       name,
       niche: character.niche || null,
       handle,
       questionnaire: character.answers || {},
-      persona: character,
+      persona: personaWithDefaults(character),
       imageUrl: imageUrl || null,
-      postsPerDay,
+      postsPerDay: DEFAULT_POSTS_PER_DAY,
       // "ready" = character set up; account setup is the next step.
       status: "ready",
+    });
+
+    let saved = await repo.influencers.update(influencer.id, {
+      posting_schedule: buildDefaultAutopilotSchedule(influencer.id),
     });
 
     // Move the onboarding portrait out of previews/ into this influencer's own
@@ -74,15 +88,13 @@ router.post(
     if (imageUrl) {
       const persistedUrl = await persistInfluencerProfileImage(influencer.id, imageUrl);
       if (persistedUrl !== imageUrl) {
-        const updated = await repo.influencers.update(influencer.id, {
+        saved = await repo.influencers.update(influencer.id, {
           image_url: persistedUrl,
         });
-        res.status(201).json({ ok: true, influencer: updated });
-        return;
       }
     }
 
-    res.status(201).json({ ok: true, influencer });
+    res.status(201).json({ ok: true, influencer: saved });
   })
 );
 
@@ -253,7 +265,17 @@ router.post(
       req.body;
     if (!name) return res.status(400).json({ ok: false, error: "name is required" });
 
-    const influencer = await repo.influencers.create({ name, niche, questionnaire, postsPerDay });
+    const influencer = await repo.influencers.create({
+      name,
+      niche,
+      questionnaire,
+      postsPerDay: postsPerDay || DEFAULT_POSTS_PER_DAY,
+    });
+
+    await repo.influencers.update(influencer.id, {
+      posting_schedule: buildDefaultAutopilotSchedule(influencer.id),
+    });
+    const saved = await repo.influencers.get(influencer.id);
 
     for (const link of sourceLinks.filter(Boolean)) {
       const url = normalizeIgUrl(link);
@@ -268,7 +290,7 @@ router.post(
       await repo.jobs.enqueue({ influencerId: influencer.id, type: "clone_persona" });
     }
 
-    res.status(201).json({ ok: true, influencer });
+    res.status(201).json({ ok: true, influencer: saved });
   })
 );
 
@@ -359,7 +381,66 @@ router.patch(
     ];
     const fields = {};
     for (const k of allowed) if (k in req.body) fields[k] = req.body[k];
+    if (fields.persona && typeof fields.persona === "object") {
+      const existing =
+        owned.persona && typeof owned.persona === "object" ? owned.persona : {};
+      fields.persona = mergePersonaUpdate(existing, fields.persona);
+      // Backfill a defaults snapshot for older influencers that pre-date this feature.
+      if (!fields.persona.personaDefaults) {
+        fields.persona.personaDefaults = snapshotPersonaDefaults(existing);
+      }
+    }
     const influencer = await repo.influencers.update(req.params.id, fields);
+    res.json({ ok: true, influencer });
+  })
+);
+
+// Restore persona AI fields to the snapshot taken at launch (or regenerate from
+// the original creation brief when no snapshot exists).
+router.post(
+  "/:id/persona/reset",
+  requireAuth,
+  asyncH(async (req, res) => {
+    const owned = await loadOwned(req, res);
+    if (!owned) return;
+
+    const existing =
+      owned.persona && typeof owned.persona === "object" ? owned.persona : {};
+    let restored = null;
+
+    if (existing.personaDefaults && typeof existing.personaDefaults === "object") {
+      restored = {
+        ...existing.personaDefaults,
+        personaDefaults: existing.personaDefaults,
+        answers: existing.answers ?? owned.questionnaire ?? {},
+      };
+    } else {
+      const answers =
+        (existing.answers && typeof existing.answers === "object" ? existing.answers : null) ||
+        (owned.questionnaire && typeof owned.questionnaire === "object"
+          ? owned.questionnaire
+          : null);
+      if (!answers || !Object.keys(answers).length) {
+        return res.status(400).json({
+          ok: false,
+          error: "No saved defaults for this influencer",
+        });
+      }
+      if (!gemini.isConfigured()) {
+        return res.status(503).json({ ok: false, error: "character generation is not configured" });
+      }
+      const character = await gemini.designOnboardingCharacter({ answers });
+      restored = personaWithDefaults({ ...character, answers });
+    }
+
+    const name = String(restored.displayName || owned.name || "").trim() || owned.name;
+    const handle = (restored.handleSuggestions?.[0] || owned.handle || "").trim() || null;
+    const influencer = await repo.influencers.update(owned.id, {
+      name,
+      niche: restored.niche || owned.niche,
+      handle,
+      persona: restored,
+    });
     res.json({ ok: true, influencer });
   })
 );
@@ -411,17 +492,20 @@ router.post(
     if (!integrationId) {
       return res.status(400).json({ ok: false, error: "integrationId is required" });
     }
-    const influencer = await repo.influencers.update(req.params.id, {
+    await repo.influencers.update(req.params.id, {
       postiz_integration_id: integrationId,
       postiz_platform: platform || "instagram",
     });
+    let influencer = await repo.influencers.get(req.params.id);
+    await ensureAutopilotScheduleFor(influencer);
+    const plan = await replanInfluencer(influencer.id, { force: true });
+    influencer = await repo.influencers.get(req.params.id);
     res.json({
       ok: true,
-      influencer: {
-        id: influencer.id,
-        postiz_integration_id: influencer.postiz_integration_id,
-        postiz_platform: influencer.postiz_platform,
-      },
+      influencer,
+      schedule: plan.schedule,
+      planned: plan.planned,
+      warning: plan.warning || null,
     });
   })
 );

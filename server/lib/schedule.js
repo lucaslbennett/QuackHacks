@@ -2,6 +2,62 @@
 // random-interval cadence with jitter so posts feel human.
 
 const DEFAULT_TZ = "America/Los_Angeles";
+export const US_AUTOPILOT_TZ = "America/New_York";
+export const DEFAULT_POSTS_PER_DAY = 2;
+
+// US peak engagement windows for fixed daily slots (local time in US_AUTOPILOT_TZ).
+const MORNING_WINDOW = { sh: 9, sm: 30, eh: 12, em: 0 };
+const EVENING_WINDOW = { sh: 17, sm: 0, eh: 20, em: 0 };
+
+function seededRng(seed) {
+  let s = 0;
+  const str = String(seed);
+  for (let i = 0; i < str.length; i++) s = (Math.imul(31, s) + str.charCodeAt(i)) | 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function formatHm(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function pickTimeInRange(rng, { sh, sm, eh, em }) {
+  const lo = sh * 60 + sm;
+  const hi = eh * 60 + em;
+  return formatHm(lo + Math.floor(rng() * (hi - lo + 1)));
+}
+
+/** True when the influencer has never saved an autopilot config (empty `{}`). */
+export function isScheduleUnconfigured(raw = {}) {
+  if (!raw || typeof raw !== "object") return true;
+  if (Object.keys(raw).length === 0) return true;
+  if (raw.enabled === false) return false;
+  if (raw.enabled === true && (raw.mode === "fixed" || raw.mode === "random")) return false;
+  if (raw.mode === "fixed" && Array.isArray(raw.times) && raw.times.length > 0) return false;
+  if (raw.mode === "random") return false;
+  return true;
+}
+
+/** Default enabled fixed schedule: 2× daily at stable, per-influencer US times. */
+export function buildDefaultAutopilotSchedule(influencerId) {
+  const rng = seededRng(influencerId || "default");
+  const times = [
+    pickTimeInRange(rng, MORNING_WINDOW),
+    pickTimeInRange(rng, EVENING_WINDOW),
+  ].sort();
+  return normalizeSchedule({
+    enabled: true,
+    mode: "fixed",
+    timezone: US_AUTOPILOT_TZ,
+    times,
+  });
+}
 // Random-mode cadence options in minutes (5 min is for demo/stress-test).
 export const VALID_INTERVAL_MINUTES = [5, 60, 360, 1440];
 const VALID_INTERVAL_SET = new Set(VALID_INTERVAL_MINUTES);

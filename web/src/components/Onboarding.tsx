@@ -411,18 +411,12 @@ export default function Onboarding({
               </Section>
             )}
 
-            {character.postingStrategy && (
-              <Section title="Posting cadence">
-                <p className="text-[14px] text-black/70">
-                  {character.postingStrategy.postsPerDay}× per day
-                  {character.postingStrategy.bestTimes?.length
-                    ? ` · best around ${character.postingStrategy.bestTimes
-                        .slice(0, 3)
-                        .join(", ")}`
-                    : ""}
-                </p>
-              </Section>
-            )}
+            <Section title="Autopilot">
+              <p className="text-[14px] text-black/70">
+                Posts 2× per day at optimal US times once Instagram is connected.
+                Each creator gets their own fixed daily schedule automatically.
+              </p>
+            </Section>
           </div>
 
           <div className="mt-8 flex items-center justify-center gap-3">

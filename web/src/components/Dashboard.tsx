@@ -11,6 +11,7 @@ import {
   getAllAnalytics,
   getCachedAllAnalytics,
   type AllAnalytics,
+  type PostAnalytics,
 } from "../lib/analytics";
 import DashboardLayout, { type DashSection } from "./DashboardLayout";
 import InfluencerPanel from "./InfluencerPanel";
@@ -729,20 +730,15 @@ function Content({ influencers }: { influencers: Influencer[] }) {
 
 /* ---------------- Analytics ---------------- */
 
-function Sparkline() {
-  const points = [8, 14, 11, 19, 16, 24, 22, 31, 28, 38, 36, 47];
-  const max = Math.max(...points);
-  const w = 320;
-  const h = 72;
-  const step = w / (points.length - 1);
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${i * step} ${h - (p / max) * h}`)
-    .join(" ");
+function LiveBadge() {
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-20 w-full" aria-hidden>
-      <path d={`${path} L ${w} ${h} L 0 ${h} Z`} fill="rgba(91,115,214,0.10)" />
-      <path d={path} fill="none" stroke="#5b73d6" strokeWidth="2" />
-    </svg>
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+      </span>
+      Live
+    </span>
   );
 }
 
@@ -753,20 +749,18 @@ function fmtNum(n: number) {
   return String(n);
 }
 
-function Analytics() {
-  const channels = [
-    { label: "Instagram Reels", value: "62%", bar: 62 },
-    { label: "TikTok", value: "24%", bar: 24 },
-    { label: "YouTube Shorts", value: "14%", bar: 14 },
-  ];
+function fmtMetric(value: number | null | undefined, hasData: boolean) {
+  if (!hasData || value == null) return "—";
+  return fmtNum(value);
+}
 
-  // Seed from cache so previous live totals show instantly on return.
+type RankedPostAnalytics = PostAnalytics & { influencerName: string };
+
+function Analytics() {
   const cached = getCachedAllAnalytics();
   const [live, setLive] = useState<AllAnalytics | null>(cached);
   const [loading, setLoading] = useState(!cached);
 
-  // Revalidate on mount (one server call). Only replace cached totals when the
-  // fresh result has real data, so a transient empty response doesn't blank it.
   useEffect(() => {
     let active = true;
     if (!getCachedAllAnalytics()) setLoading(true);
@@ -781,15 +775,56 @@ function Analytics() {
     };
   }, []);
 
-  // Headline totals: real values when Postiz returned them, demo values
-  // otherwise (per metric).
+  const influencers = live?.influencers ?? [];
+  const linkedCount = influencers.filter((i) => i.linked).length;
+  const hasLiveData = Boolean(live?.available);
+
+  const followersLive = influencers.some((i) => i.channel?.followers != null);
+  const viewsLive = influencers.some((i) => i.totals.views != null);
+  const likesLive = influencers.some((i) => i.totals.likes != null);
+  const commentsLive = influencers.some((i) => i.totals.comments != null);
+
   const t = live?.totals;
   const headline = [
-    { label: "Followers", value: fmtNum(t?.followers ?? 0), live: !!t?.followers },
-    { label: "Total views", value: fmtNum(t?.views ?? 0), live: !!t?.views },
-    { label: "Likes", value: fmtNum(t?.likes ?? 0), live: !!t?.likes },
-    { label: "Comments", value: fmtNum(t?.comments ?? 0), live: !!t?.comments },
+    {
+      label: "Followers",
+      value: fmtMetric(t?.followers, followersLive),
+      live: followersLive,
+    },
+    {
+      label: "Total views",
+      value: fmtMetric(t?.views, viewsLive),
+      live: viewsLive,
+    },
+    {
+      label: "Likes",
+      value: fmtMetric(t?.likes, likesLive),
+      live: likesLive,
+    },
+    {
+      label: "Comments",
+      value: fmtMetric(t?.comments, commentsLive),
+      live: commentsLive,
+    },
   ];
+
+  const topPosts: RankedPostAnalytics[] = influencers
+    .flatMap((inf) =>
+      inf.posts
+        .filter((p) => p.likes != null || p.comments != null || p.views != null)
+        .map((p) => ({ ...p, influencerName: inf.name })),
+    )
+    .sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+
+  const statusLabel = loading
+    ? "Loading…"
+    : hasLiveData
+      ? null
+      : linkedCount > 0
+        ? "Waiting for Postiz data"
+        : influencers.length > 0
+          ? "Link accounts to see live stats"
+          : "No influencers yet";
 
   return (
     <>
@@ -800,25 +835,18 @@ function Analytics() {
         >
           Analytics
         </h1>
-        {live?.available ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] font-medium text-emerald-700">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-            </span>
-            Live
-          </span>
-        ) : (
+        {hasLiveData ? (
+          <LiveBadge />
+        ) : statusLabel ? (
           <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] text-neutral-400">
-            {loading ? "Loading…" : "Demo data"}
+            {statusLabel}
           </span>
-        )}
+        ) : null}
       </div>
       <p className="mb-8 text-[15px] text-neutral-500">
-        Reach and engagement across all your influencers.
+        Live reach and engagement from Postiz across all linked influencers.
       </p>
 
-      {/* Headline totals (live across all influencers when available) */}
       <section className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {headline.map((m) => (
           <div
@@ -839,51 +867,98 @@ function Analytics() {
         ))}
       </section>
 
-      <section className="mb-10 rounded-2xl border border-neutral-200 p-6">
-        <div className="mb-1 flex items-end justify-between">
-          <p className="text-[13px] text-neutral-500">Views · last 12 weeks</p>
-          <p className="text-[13px] font-medium text-[#5b73d6]">+318%</p>
-        </div>
-        <Sparkline />
-      </section>
+      {!loading && !hasLiveData && (
+        <section className="mb-10 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50/50 p-8 text-center">
+          <p className="text-[15px] text-neutral-600">
+            {influencers.length === 0
+              ? "Create an influencer and link their Instagram account in Postiz to see analytics here."
+              : linkedCount === 0
+                ? "Open an influencer, connect their Instagram account, and publish a post — metrics will show up once Postiz has data."
+                : "Accounts are linked but Postiz hasn't returned metrics yet. Try again after your next post goes live."}
+          </p>
+        </section>
+      )}
 
-      <div className="grid gap-10 lg:grid-cols-2">
-        <section>
-          <Heading>By channel</Heading>
-          <div className="flex flex-col gap-4">
-            {channels.map((c) => (
-              <div key={c.label}>
-                <div className="mb-1 flex items-center justify-between text-[13px]">
-                  <span className="text-neutral-700">{c.label}</span>
-                  <span className="text-neutral-400">{c.value}</span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-                  <div className="h-full rounded-full bg-[#5b73d6]" style={{ width: `${c.bar}%` }} />
-                </div>
-              </div>
-            ))}
+      {influencers.length > 0 && (
+        <section className="mb-10">
+          <Heading>By influencer</Heading>
+          <div className="overflow-hidden rounded-2xl border border-neutral-200">
+            <table className="w-full text-left text-[14px]">
+              <thead className="bg-neutral-50 text-[12px] uppercase tracking-wide text-neutral-400">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Influencer</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Followers</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Views</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Likes</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {influencers.map((inf) => (
+                  <tr key={inf.influencerId} className="border-t border-neutral-100">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-neutral-900">{inf.name}</p>
+                      {!inf.linked && (
+                        <p className="text-[12px] text-neutral-400">Not linked to Postiz</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {fmtMetric(inf.channel?.followers, inf.channel?.followers != null)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {fmtMetric(inf.totals.views, inf.totals.views != null)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {fmtMetric(inf.totals.likes, inf.totals.likes != null)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {fmtMetric(inf.totals.comments, inf.totals.comments != null)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
+      )}
 
-        <section>
-          <Heading>Key metrics</Heading>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { label: "Avg. watch time", value: "21.4s" },
-              { label: "Engagement rate", value: "8.7%" },
-              { label: "Follower growth", value: "+5.1K/wk" },
-              { label: "Save rate", value: "3.2%" },
-            ].map((m) => (
-              <div key={m.label} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-5">
-                <p className="text-[13px] text-neutral-500">{m.label}</p>
-                <p className="mt-2 text-[24px] text-neutral-900" style={{ fontFamily: "var(--font-heading)" }}>
-                  {m.value}
-                </p>
-              </div>
-            ))}
+      {topPosts.length > 0 && (
+        <section className="mb-10">
+          <Heading>Top posts</Heading>
+          <div className="overflow-hidden rounded-2xl border border-neutral-200">
+            <table className="w-full text-left text-[14px]">
+              <thead className="bg-neutral-50 text-[12px] uppercase tracking-wide text-neutral-400">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Post</th>
+                  <th className="px-4 py-2.5 font-medium">Influencer</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Views</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Likes</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topPosts.map((p, i) => (
+                  <tr key={p.postizPostId || i} className="border-t border-neutral-100">
+                    <td className="max-w-[240px] truncate px-4 py-3 text-neutral-700">
+                      {p.caption || "Post"}
+                    </td>
+                    <td className="px-4 py-3 text-neutral-600">{p.influencerName}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {p.views != null ? fmtNum(p.views) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {p.likes != null ? fmtNum(p.likes) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-neutral-700">
+                      {p.comments != null ? fmtNum(p.comments) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
-      </div>
+      )}
     </>
   );
 }
