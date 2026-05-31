@@ -81,7 +81,12 @@ export async function createSession(opts = {}) {
   const body = {};
 
   // proxyCountryCode: send only when set; omitting lets the API default to "us".
-  const proxyCountryCode = opts.proxyCountryCode ?? config.browserUse.proxyCountryCode;
+  // When a ROTATION pool (BROWSER_USE_PROXY_COUNTRIES) is configured, pick one at
+  // random per session so consecutive signups egress from different residential
+  // pools (dodging a flagged range). An explicit opts.proxyCountryCode still wins.
+  const pool = config.browserUse.proxyCountries;
+  const rotated = pool && pool.length ? pool[Math.floor(Math.random() * pool.length)] : "";
+  const proxyCountryCode = opts.proxyCountryCode ?? (rotated || config.browserUse.proxyCountryCode);
   if (proxyCountryCode) body.proxyCountryCode = proxyCountryCode;
 
   const profileId = opts.profileId ?? config.browserUse.profileId;

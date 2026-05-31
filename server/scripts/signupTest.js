@@ -37,13 +37,67 @@ const STATIC_PERSONA = {
   bio: "streetwear curator + fit inspo",
 };
 
+// Name + niche pools for per-run RANDOMIZED personas. Reusing one identity
+// ("Nova Sterling" / novasterling*) across every attempt is an identity-
+// correlation tell: Instagram sees dozens of near-identical personas from the
+// same email base + IP pool and treats the whole cluster as abuse. Minting a
+// distinct, realistic person per attempt removes that shared signal so each
+// signup is evaluated on its own.
+const FIRST_NAMES = [
+  "Ava", "Mia", "Zoe", "Leah", "Ella", "Nora", "Ruby", "Isla", "Maya", "Lily",
+  "Chloe", "Hazel", "Aria", "Iris", "June", "Skye", "Wren", "Elle", "Nina", "Cleo",
+  "Liam", "Noah", "Ethan", "Owen", "Leo", "Kai", "Jude", "Cole", "Finn", "Milo",
+  "Ezra", "Reed", "Theo", "Jace", "Rhys", "Beau", "Cruz", "Dean", "Gage", "Knox",
+];
+const LAST_NAMES = [
+  "Carter", "Brooks", "Hayes", "Reyes", "Quinn", "Bennett", "Foster", "Walsh",
+  "Mercer", "Dalton", "Sloan", "Vance", "Rhodes", "Pierce", "Lane", "Cross",
+  "Holt", "Frost", "Beck", "Knight", "Shaw", "Wells", "Reed", "Marsh", "Stone",
+  "Page", "Cole", "Hart", "Booth", "Flynn", "Dixon", "Doyle", "Gray", "Nash",
+];
+const NICHES = [
+  { niche: "streetwear fashion", bio: "fits + thrift finds" },
+  { niche: "specialty coffee", bio: "pourover nerd + cafe hunts" },
+  { niche: "home cooking", bio: "weeknight recipes that slap" },
+  { niche: "indie music", bio: "new tracks on repeat" },
+  { niche: "film photography", bio: "35mm + grain" },
+  { niche: "houseplants", bio: "too many monstera" },
+  { niche: "trail running", bio: "miles + mud" },
+  { niche: "skincare", bio: "routine + drugstore dupes" },
+  { niche: "travel", bio: "window-seat enjoyer" },
+  { niche: "gaming", bio: "ranked grind + cozy games" },
+];
+
+function choice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Builds a fresh, distinct persona (name, handle bases, niche, bio) for one run.
+function randomPersona() {
+  const first = choice(FIRST_NAMES);
+  const last = choice(LAST_NAMES);
+  const { niche, bio } = choice(NICHES);
+  const fl = `${first}${last}`.toLowerCase();
+  const f = first.toLowerCase();
+  const l = last.toLowerCase();
+  const handleSuggestions = [
+    fl,
+    `${f}.${l}`,
+    `${f}_${l}`,
+    `${f}${last.toLowerCase().slice(0, 1)}`,
+    `${f}${choice(["xo", "io", "hq", "co", "tv", "", ""])}`,
+  ].filter(Boolean);
+  return { displayName: `${first} ${last}`, handleSuggestions, niche, bio };
+}
+
 function parseArgs(argv) {
-  const args = { runs: 1, all: false, gemini: false };
+  const args = { runs: 1, all: false, gemini: false, static: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--runs") args.runs = Math.max(1, parseInt(argv[++i] || "1", 10) || 1);
     else if (a === "--all") args.all = true;
     else if (a === "--gemini") args.gemini = true;
+    else if (a === "--static") args.static = true;
   }
   return args;
 }
@@ -66,7 +120,14 @@ async function buildPersona(useGemini) {
 
 async function runOnce({ index, persona, debugRoot }) {
   const debugDir = path.join(debugRoot, `run-${index}`);
-  const email = await generateEmail({ seed: `qa-nova-${index}` });
+  // Seed the email alias off the persona's own handle so the address looks like
+  // it belongs to this person (e.g. lucasfasto+avacarter…@) rather than a fixed
+  // "qa-nova" stem shared by every attempt — another small de-correlation.
+  const emailSeed =
+    (Array.isArray(persona?.handleSuggestions) && persona.handleSuggestions[0]) ||
+    persona?.displayName ||
+    `qa-${index}`;
+  const email = await generateEmail({ seed: emailSeed });
   const influencerId = `signup-test-${Date.now()}-${index}`;
 
   log.info("─".repeat(64));
@@ -170,11 +231,18 @@ async function main() {
   await mkdir(debugRoot, { recursive: true });
   log.info("Debug artifacts →", debugRoot);
 
-  const persona = await buildPersona(args.gemini);
+  // Persona strategy: with --gemini, synthesize one persona up front. Otherwise
+  // mint a DISTINCT random persona per run so attempts don't all share the same
+  // identity (a correlation tell). Pass --static to force the legacy fixed one.
+  const geminiPersona = args.gemini ? await buildPersona(true) : null;
+  const personaFor = () =>
+    geminiPersona || (args.static ? STATIC_PERSONA : randomPersona());
   const results = [];
   let success = false;
 
   for (let i = 1; i <= args.runs; i++) {
+    const persona = personaFor();
+    log.info(`RUN ${i} persona`, { displayName: persona.displayName, niche: persona.niche });
     const r = await runOnce({ index: i, persona, debugRoot });
     results.push(r);
     if (r.loggedIn) {

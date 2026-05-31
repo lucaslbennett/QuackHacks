@@ -2,6 +2,7 @@ import { Stagehand } from "@browserbasehq/stagehand";
 import { config } from "../../config.js";
 import { createLogger } from "../../lib/logger.js";
 import * as browserUse from "./browserUse.js";
+import * as localBrowser from "./localBrowser.js";
 
 const log = createLogger("stagehand");
 
@@ -44,6 +45,15 @@ function buildConnectUrl() {
 // if REST creation is disabled or fails, so a transient API hiccup never fully
 // breaks a run.
 async function openBrowserUseSession() {
+  // LOCAL-BROWSER escape hatch: drive a real Chrome on this machine (residential
+  // home IP) instead of a Browser Use cloud browser. Used to dodge Instagram's
+  // integrity-flagging of shared automation proxy ranges.
+  if (config.browserUse.localBrowser) {
+    const local = await localBrowser.launchLocalSession();
+    log.info("Using LOCAL Chrome session (home IP egress)", { sessionUrl: local.sessionUrl });
+    return local;
+  }
+
   if (config.browserUse.useRestSessions) {
     let session = null;
     try {

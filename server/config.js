@@ -92,6 +92,16 @@ export const config = {
     // REST API apply its default ("us"); on the connect-URL path blank uses
     // Browser Use's default egress.
     proxyCountryCode: (process.env.BROWSER_USE_PROXY_COUNTRY || "").trim().toLowerCase(),
+    // Optional ROTATION pool of residential-proxy countries (comma-separated,
+    // e.g. "us,gb,ca,au"). When set, each new session picks one at random so
+    // attempts egress from DIFFERENT residential subnets/pools instead of the
+    // single default — used to dodge a proxy range Instagram has flagged. Keep
+    // them English-locale so IG's UI (and our text-based selectors) stay English.
+    // Blank (default) keeps the single proxyCountryCode behavior.
+    proxyCountries: (process.env.BROWSER_USE_PROXY_COUNTRIES || "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
     // Optional saved browser profile UUID. Loads cookies/localStorage so an IG
     // login can persist across sessions; blank starts from a fresh browser.
     profileId: process.env.BROWSER_USE_PROFILE_ID || "",
@@ -101,6 +111,18 @@ export const config = {
     // Record the session so it can be replayed from the dashboard afterwards.
     // Off by default (small extra cost); handy when debugging "what happened".
     enableRecording: bool(process.env.BROWSER_USE_RECORDING, false),
+    // LOCAL BROWSER escape hatch. When SIGNUP_LOCAL_BROWSER=1, the signup flow
+    // launches a real local Chrome (e.g. Playwright's "Chrome for Testing") on
+    // THIS machine and drives it over CDP instead of a Browser Use cloud browser.
+    // The point is egress: the local browser uses the host's own residential IP,
+    // which Instagram trusts far more than Browser Use's shared automation proxy
+    // pool (whose ranges Meta integrity-flags — the cause of valid email codes
+    // being rejected as "invalid/expired"). Headful by default (most trustworthy);
+    // set SIGNUP_LOCAL_HEADLESS=1 to run headless. CHROME_EXECUTABLE overrides the
+    // auto-detected Chrome binary path.
+    localBrowser: bool(process.env.SIGNUP_LOCAL_BROWSER, false),
+    localHeadless: bool(process.env.SIGNUP_LOCAL_HEADLESS, false),
+    localChromeExecutable: (process.env.CHROME_EXECUTABLE || "").trim(),
     // Optional FIXED browser viewport (CSS px). Left at 0 (the default), each
     // session picks a random COMMON desktop resolution so window.screen /
     // innerWidth / outerWidth don't expose one constant automation viewport —

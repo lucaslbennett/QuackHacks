@@ -6,7 +6,7 @@ import { withStagehand } from "./stagehand.js";
 import * as capsolver from "./capsolver.js";
 import * as gemini from "../gemini.js";
 import { waitForEmailCode, generateEmail } from "../verification.js";
-import { sleep, randomInt } from "../../lib/util.js";
+import { sleep, randomInt, pick } from "../../lib/util.js";
 import { createLogger } from "../../lib/logger.js";
 
 // Instagram serves reCAPTCHA v2 *Enterprise* on its signup + "confirm it's you"
@@ -54,9 +54,37 @@ function makeStepCapture(page, debugDir) {
   };
 }
 
+// Builds a FRESH, realistic-looking username. Every call must yield a NEW handle
+// — even back-to-back runs on the same persona base — or Instagram rejects the
+// signup as "username taken" (and reusing a handle we already registered is an
+// obvious automation tell). We therefore combine the cleaned persona base with a
+// TIME-SEEDED suffix (the tail of the epoch-ms, which changes every run and so
+// can't collide) plus a small random spread, and vary the join style so handles
+// read like real people's rather than an obviously-templated sequence.
 function buildUsername(base) {
-  const clean = (base || "creator").toLowerCase().replace(/[^a-z0-9._]/g, "").slice(0, 18);
-  return `${clean}${randomInt(100, 9999)}`;
+  const clean = (base || "creator")
+    .toLowerCase()
+    .replace(/[^a-z0-9._]/g, "")
+    .replace(/[._]{2,}/g, ".") // collapse doubled separators
+    .replace(/^[._]+|[._]+$/g, "") // trim leading/trailing separators
+    .slice(0, 15) || "creator";
+  // 1 random digit + the last 5 digits of the epoch (ms) ⇒ unique per run (two
+  // signups won't land on the same millisecond) while still reading like the
+  // very common "name12345" handle.
+  const suffix = `${randomInt(1, 9)}${String(Date.now()).slice(-5)}`;
+  const sep = pick(["", "", "", "_", "."]); // mostly none, occasionally _ or .
+  return `${clean}${sep}${suffix}`.slice(0, 30);
+}
+
+// Picks a (randomized) persona handle base and builds a brand-new username from
+// it. Randomizing WHICH suggestion we start from — not just the suffix — gives
+// retries genuinely different-looking handles instead of the same stem twice.
+function freshUsername(persona) {
+  const candidates = [
+    ...(Array.isArray(persona?.handleSuggestions) ? persona.handleSuggestions : []),
+    persona?.displayName,
+  ].filter(Boolean);
+  return buildUsername(candidates.length ? pick(candidates) : "creator");
 }
 
 function randomPassword() {
@@ -1280,6 +1308,91 @@ async function imageCaptchaPresent(page) {
     .catch(() => false);
 }
 
+// Instagram's post-signup INTEGRITY GATE: a card titled "Confirm you're human
+// to use your account, <username>" with a single big "Continue" button and NO
+// challenge widget yet (no reCAPTCHA iframe, no code input). It is just the
+// INTRO to the human check — you must click Continue to reach the actual
+// reCAPTCHA / image-code, which the solvers then clear. Because neither
+// captchaPresent() nor imageCaptchaPresent() matches this button-only screen,
+// without handling it the run stalls on the intro and the final URL check
+// mislabels the account "suspended" — exactly the "Continue never gets clicked"
+// symptom.
+async function confirmHumanGatePresent(page) {
+  // The distorted image-code challenge AND the reCAPTCHA challenge can also sit
+  // under "Confirm you're human" text. Their widgets (a code input / a reCAPTCHA
+  // iframe) mean we're already PAST the button-only intro, so defer to the
+  // dedicated solvers instead of re-clicking Continue over a live challenge.
+  if (await firstVisibleSelector(page, IMAGE_CAPTCHA_INPUT_SELECTORS)) return false;
+  if (await captchaPresent(page)) return false;
+  return page
+    .evaluate(() => {
+      const t = ((document.body && document.body.innerText) || "").toLowerCase();
+      const human =
+        t.includes("confirm you're human") || t.includes("confirm you\u2019re human");
+      const acct = t.includes("use your account");
+      const hasCode = t.includes("code from the image") || t.includes("enter the code");
+      return human && acct && !hasCode;
+    })
+    .catch(() => false);
+}
+
+// Clicks through the "Confirm you're human to use your account" intro gate so
+// the real challenge renders for the solvers. Clicks its Continue/Start button
+// (via a real cursor arc), then waits for the gate to give way. Returns true
+// only if we actually advanced past it (so callers don't loop on a stuck gate);
+// false when the gate wasn't present or couldn't be cleared.
+async function passConfirmHumanGate({ page, log, capture }) {
+  if (!(await confirmHumanGatePresent(page))) return false;
+  log.info(
+    '"Confirm you\'re human to use your account" gate detected — clicking Continue to reach the human check'
+  );
+  await capture?.("confirm-human-gate");
+  // A real person reads this screen for a beat before clicking the one button.
+  await readPause();
+  await idleMouseDrift(page);
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // Primary: click by the visible button label (real mouse arc + click).
+    let clicked = await clickButtonByText(page, [
+      "Continue",
+      "Start",
+      "Get started",
+      "Get Started",
+      "Begin",
+      "Next",
+    ]);
+    // Fallback: the most prominent button / role=button on the card.
+    if (!clicked) {
+      const sel = await firstVisibleSelector(page, [
+        'button[type="submit"]',
+        'div[role="button"]',
+        "button",
+        '[role="button"]',
+      ]);
+      if (sel) {
+        await moveMouseToSelector(page, sel);
+        await thinkTime(120, 320);
+        await page.locator(sel).first().click().catch(() => {});
+        clicked = true;
+      }
+    }
+
+    // Wait for the intro gate to give way to the next screen (the real
+    // challenge, or a cleared/home state).
+    for (let i = 0; i < 8; i++) {
+      await sleep(800);
+      if (!(await confirmHumanGatePresent(page))) {
+        log.info("Advanced past the confirm-human gate");
+        await capture?.("confirm-human-gate-passed");
+        return true;
+      }
+    }
+    log.warn(`Confirm-human gate still up after clicking Continue (attempt ${attempt}/3)`);
+  }
+  await capture?.("confirm-human-gate-stuck");
+  return false;
+}
+
 // Computes a viewport-clamped clip rectangle around the distorted code image so
 // we screenshot ONLY the code (the cleanest OCR signal). Picks the largest
 // plausibly-sized <img>/<canvas>/<svg> that sits above the code input; returns
@@ -1525,30 +1638,159 @@ async function emailCodeStepPresent(page) {
     .catch(() => false);
 }
 
-// Enters the email confirmation code. Handles both the common single-input
-// layout and a split one-digit-per-box OTP layout (some IG variants), and
-// clears the field first so a retry doesn't append to a stale value.
-async function enterEmailCode(stagehand, page, code, log) {
-  const single = await firstVisibleSelector(page, [
+// Compares a read-back field value to the expected code, tolerant of any
+// formatting the input applies (e.g. a "612 940" space or stray separators) so a
+// correctly-typed code isn't seen as a mismatch.
+function codeValueMatches(got, code) {
+  if (got == null) return false;
+  return got.replace(/\D/g, "") === String(code).replace(/\D/g, "");
+}
+
+// Resolves the confirmation-code <input>, robust to IG dropping the stable
+// name/autocomplete/aria identifiers. This was THE reason valid codes kept being
+// rejected: the field no longer matched the hardcoded selectors, so the humanly-
+// typed path never ran and the flow fell to a Stagehand act() that PASTES all
+// six digits in one event — the exact automation tell that makes IG reject a
+// correct code as "invalid/expired". We now try, in order: explicit selectors,
+// the placeholder/aria/label text ("Confirmation code"/"code"), then the single
+// prominent visible text/tel/numeric input on the code screen. Returns a CSS
+// selector (tagging the element with data-qh-field=code when resolved by scan).
+async function resolveCodeInput(page) {
+  const explicit = await firstVisibleSelector(page, [
     'input[name="email_confirmation_code"]',
     'input[name="confirmationCode"]',
     'input[autocomplete="one-time-code"]',
     'input[aria-label*="confirmation code" i]',
+    'input[aria-label*="code" i]',
+    'input[placeholder*="confirmation code" i]',
+    'input[placeholder*="code" i]',
     'input[type="tel"]',
+    'input[inputmode="numeric"]',
   ]);
-  if (single) {
-    try {
-      await page.locator(single).first().fill("");
-      await page.locator(single).first().fill(code);
-      return true;
-    } catch (e) {
-      log?.warn("enterEmailCode single fill failed", e?.message);
+  if (explicit) return explicit;
+
+  const byLabel = await tagInputByLabel(page, {
+    keywords: ["confirmation code", "security code", "code"],
+    key: "code",
+  });
+  if (byLabel) return byLabel;
+
+  return page
+    .evaluate(() => {
+      const isVisible = (el) => {
+        const cs = getComputedStyle(el);
+        if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const inputs = Array.from(document.querySelectorAll("input")).filter((el) => {
+        const t = (el.getAttribute("type") || "text").toLowerCase();
+        return ["text", "tel", "number", "search"].includes(t) && isVisible(el);
+      });
+      if (!inputs.length) return null;
+      const hint = (el) =>
+        `${el.placeholder || ""} ${el.getAttribute("aria-label") || ""} ${
+          (el.labels && Array.from(el.labels).map((l) => l.textContent).join(" ")) || ""
+        }`;
+      const target = inputs.find((el) => /code/i.test(hint(el))) || inputs[0];
+      target.setAttribute("data-qh-field", "code");
+      return '[data-qh-field="code"]';
+    })
+    .catch(() => null);
+}
+
+// Types the confirmation code into a SINGLE input using ONLY genuine, per-digit
+// CDP keystrokes with human gaps — and crucially NEVER an instant value-set.
+//
+// This is the whole ballgame at IG's most-scrutinized screen: the prior code
+// entered the digits via keystrokes BUT, because its read-back check was too
+// strict (it failed on a formatted "612 940" read-back), it fell through to a
+// Stagehand act()/fill() that re-set all six digits in ONE event — a paste-like
+// signal that is exactly what makes IG reject an objectively-correct, freshly-
+// issued code as "invalid or has expired". Here we type digit-by-digit, verify
+// tolerant of formatting, and on a real mismatch RE-TYPE with keystrokes rather
+// than pasting. Returns whether the field ends up holding the code.
+async function typeCodeHumanly(page, selector, code, log) {
+  if (!selector) return false;
+  const digits = String(code).trim().split("");
+  const loc = page.locator(selector).first();
+  const focusAndClear = async () => {
+    await moveMouseToSelector(page, selector);
+    await loc.hover().catch(() => {});
+    await thinkTime(80, 200);
+    await loc.click().catch(() => {});
+    await thinkTime(140, 360);
+    await loc.fill("").catch(() => {}); // start from an empty field (one clear is fine)
+    await thinkTime(120, 280);
+  };
+  try {
+    await focusAndClear();
+    for (let i = 0; i < digits.length; i++) {
+      const d = digits[i];
+      if (typeof loc.pressSequentially === "function") {
+        await loc.pressSequentially(d, { delay: randomInt(0, 30) }).catch(() => {});
+      } else if (typeof page.keyPress === "function") {
+        await page.keyPress(d).catch(() => {});
+      } else if (typeof loc.type === "function") {
+        await loc.type(d).catch(() => {});
+      } else {
+        return false;
+      }
+      await sleep(randomInt(150, 380));
+      if ((i === 2 || i === 3) && Math.random() < 0.5) await sleep(randomInt(280, 720));
     }
+    const got1 = await readInputValue(page, selector);
+    log?.info("code field read-back after keystroke pass 1", JSON.stringify(got1));
+    if (codeValueMatches(got1, code)) return true;
+
+    // Read-back didn't confirm — one clean keystroke retype (still NO paste).
+    log?.warn("Code field read-back mismatch — retyping via keystrokes once");
+    await focusAndClear();
+    if (typeof loc.pressSequentially === "function") {
+      await loc.pressSequentially(String(code), { delay: randomInt(90, 180) }).catch(() => {});
+    } else if (typeof loc.type === "function") {
+      await loc.type(String(code), { delay: randomInt(90, 180) }).catch(() => {});
+    }
+    const got2 = await readInputValue(page, selector);
+    log?.info("code field read-back after keystroke pass 2", JSON.stringify(got2));
+    if (codeValueMatches(got2, code)) return true;
+
+    // COMMIT TO KEYSTROKES: even if the read-back is uncertain, we have issued
+    // genuine per-key events. We deliberately do NOT fall through to an instant
+    // act()/fill paste of the whole code here — that paste is the documented tell
+    // that gets a correct code rejected. Report success so the caller submits the
+    // keystroke-typed value; a truly-empty field surfaces as IG asking again
+    // (a distinct, detectable outcome) rather than an "invalid" paste rejection.
+    if (got2 != null && got2.replace(/\D/g, "").length > 0) {
+      log?.warn("Proceeding with keystroke-typed code despite uncertain read-back (no paste fallback)");
+      return true;
+    }
+    return false;
+  } catch (e) {
+    log?.warn("typeCodeHumanly failed", e?.message);
+    return false;
+  }
+}
+
+// Enters the email confirmation code. Handles both the common single-input
+// layout and a split one-digit-per-box OTP layout (some IG variants), and
+// clears the field first so a retry doesn't append to a stale value.
+async function enterEmailCode(stagehand, page, code, log) {
+  const single = await resolveCodeInput(page);
+  if (single) {
+    log?.info("Resolved confirmation-code input", single);
+    // Genuine per-digit keystrokes ONLY — never an instant paste/fill, which is
+    // the documented tell that gets a correct code rejected as invalid/expired.
+    if (await typeCodeHumanly(page, single, code, log)) return true;
+    log?.warn("typeCodeHumanly could not confirm the code value; trying split-OTP / act fallbacks");
+  } else {
+    log?.warn("Could not resolve the confirmation-code input by selector/label/scan");
   }
 
-  // Split OTP layout: one <input maxlength="1"> per digit.
-  const filledSplit = await page
-    .evaluate((value) => {
+  // Split OTP layout: one <input maxlength="1"> per digit. Type each box with
+  // real keystrokes (focus + key) instead of setting .value directly.
+  const otpBoxes = await page
+    .evaluate(() => {
       const boxes = Array.from(
         document.querySelectorAll('input[maxlength="1"], input[inputmode="numeric"]')
       ).filter((el) => {
@@ -1556,18 +1798,31 @@ async function enterEmailCode(stagehand, page, code, log) {
         const r = el.getBoundingClientRect();
         return cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0;
       });
-      if (boxes.length < value.length) return false;
-      for (let i = 0; i < value.length; i++) {
-        const el = boxes[i];
-        el.focus();
-        el.value = value[i];
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
+      boxes.forEach((el, i) => el.setAttribute("data-qh-otp", String(i)));
+      return boxes.length;
+    })
+    .catch(() => 0);
+  if (otpBoxes >= String(code).length) {
+    try {
+      const digits = String(code).split("");
+      for (let i = 0; i < digits.length; i++) {
+        const boxSel = `[data-qh-otp="${i}"]`;
+        const boxLoc = page.locator(boxSel).first();
+        await moveMouseToSelector(page, boxSel).catch(() => {});
+        await boxLoc.click().catch(() => {});
+        await thinkTime(60, 160);
+        if (typeof boxLoc.pressSequentially === "function") {
+          await boxLoc.pressSequentially(digits[i], { delay: randomInt(0, 30) }).catch(() => {});
+        } else if (typeof page.keyPress === "function") {
+          await page.keyPress(digits[i]).catch(() => {});
+        }
+        await sleep(randomInt(140, 360));
       }
       return true;
-    }, code)
-    .catch(() => false);
-  if (filledSplit) return true;
+    } catch (e) {
+      log?.warn("split-OTP keystroke entry failed", e?.message);
+    }
+  }
 
   await stagehand
     .act(`type "${code}" into the confirmation code field`)
@@ -1595,18 +1850,40 @@ async function emailCodeRejected(page) {
     .catch(() => false);
 }
 
-// Best-effort: ask Instagram to send a new confirmation code. Returns whether a
-// resend control was found and clicked.
+// Best-effort: ask Instagram to ACTUALLY send a new confirmation code. Returns
+// whether a real resend was triggered.
+//
+// IMPORTANT: on the current IG layout "I didn't get the code" does NOT resend —
+// it only OPENS a "Didn't get the code?" sheet whose real action is a separate
+// "Resend confirmation code" row. The old behavior clicked just the opener and
+// returned true, so no code was ever re-sent and attempts 2/3 always timed out
+// waiting for an email that never came. We now (1) try any inline/direct resend
+// control, then (2) open the sheet and click the real "Resend confirmation
+// code" row inside it.
+const RESEND_LABELS = [
+  "Resend confirmation code",
+  "Resend code",
+  "Send a new code",
+  "Get a new code",
+  "Send again",
+  "Resend",
+];
+
 async function requestNewEmailCode(page) {
-  return clickButtonByText(page, [
+  // (1) A directly-visible resend control (some variants render it inline).
+  if (await clickButtonByText(page, RESEND_LABELS)) return true;
+
+  // (2) Open the "Didn't get the code?" sheet, then click the real resend row.
+  const opened = await clickButtonByText(page, [
     "I didn't get the code",
     "I didn\u2019t get the code",
-    "Resend code",
-    "Resend",
-    "Send a new code",
-    "Get a new code",
-    "Send again",
   ]);
+  if (opened) {
+    // Let the bottom-sheet/modal animate in before reaching for its rows.
+    await sleep(randomInt(900, 1600));
+    if (await clickButtonByText(page, RESEND_LABELS)) return true;
+  }
+  return false;
 }
 
 // True if Instagram rejected the EMAIL ADDRESS itself at the signup form (as
@@ -1626,6 +1903,29 @@ async function emailAddressRejected(page) {
         /try (a different|another) email/,
         /use a (different|valid) email/,
         /this email (looks invalid|isn'?t valid)/,
+      ];
+      return patterns.some((re) => re.test(t));
+    })
+    .catch(() => false);
+}
+
+// True if Instagram rejected the chosen USERNAME (already taken / not available).
+// IG validates this inline as you type AND again on submit; when it fires, the
+// form won't advance until a different handle is entered — so we detect it and
+// rotate to a brand-new username rather than getting stuck resubmitting a taken
+// one. Kept specific to the username (not the email/password) messaging.
+async function usernameRejected(page) {
+  return page
+    .evaluate(() => {
+      const t = ((document.body && document.body.innerText) || "").toLowerCase();
+      const patterns = [
+        /this username isn'?t available/,
+        /that username isn'?t available/,
+        /username isn'?t available/,
+        /username is not available/,
+        /username.*(is )?(taken|already (taken|in use))/,
+        /a user with that username already exists/,
+        /(choose|try|pick) (a |another )?(different )?username/,
       ];
       return patterns.some((re) => re.test(t));
     })
@@ -1898,7 +2198,7 @@ async function fillBirthdayIfPresent(stagehand, page, dob, log, { timeoutMs = 60
 // verification through the pluggable verification service.
 export async function createInstagramAccount({ influencerId, persona, email, onSession, debugDir }) {
   const fullName = persona?.displayName || "Creator";
-  const username = buildUsername(persona?.handleSuggestions?.[0] || persona?.displayName);
+  let username = freshUsername(persona);
   const password = randomPassword();
   const dob = pickBirthday();
 
@@ -1914,9 +2214,28 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
     // Each is a fast no-op when its challenge isn't on screen, so calling both
     // everywhere we settle is safe.
     const settleCaptcha = async () => {
-      const hadRecaptcha = await ensureCaptchaSolved({ page, sessionUrl, log });
-      const hadImageCode = await solveImageCaptchaIfPresent({ stagehand, page, log, capture });
-      return hadRecaptcha || hadImageCode;
+      // FIRST click through IG's "Confirm you're human to use your account"
+      // INTRO gate (just a Continue button, no challenge widget) — otherwise the
+      // solvers below see nothing to do and the run stalls on the intro (the
+      // "Continue never gets clicked" bug). Clicking Continue reveals the real
+      // reCAPTCHA / image-code, which the solvers then clear.
+      const passedGate = await passConfirmHumanGate({ page, log, capture });
+      let hadRecaptcha = await ensureCaptchaSolved({ page, sessionUrl, log });
+      let hadImageCode = await solveImageCaptchaIfPresent({ stagehand, page, log, capture });
+      // If clicking through the gate surfaced a fresh challenge (or a second
+      // gate) after that first pass, run one more pass to clear it.
+      if (
+        passedGate &&
+        ((await confirmHumanGatePresent(page)) ||
+          (await captchaPresent(page)) ||
+          (await imageCaptchaPresent(page)))
+      ) {
+        await passConfirmHumanGate({ page, log, capture });
+        hadRecaptcha = (await ensureCaptchaSolved({ page, sessionUrl, log })) || hadRecaptcha;
+        hadImageCode =
+          (await solveImageCaptchaIfPresent({ stagehand, page, log, capture })) || hadImageCode;
+      }
+      return passedGate || hadRecaptcha || hadImageCode;
     };
 
     // Realistic entry: homepage → (read/scroll/cursor) → click "Sign up" → form,
@@ -2091,6 +2410,39 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
       await capture(`after-email-rotation-${emailRotations}`);
     }
 
+    // If IG rejected the USERNAME as already taken, rotate to a brand-new handle
+    // and resubmit. buildUsername is time-seeded so each retry is genuinely new
+    // (no reusing a registered handle), and a small bounded loop avoids spinning
+    // forever if something else is also wrong. A normal (available) username
+    // never matches, so the happy path is unaffected.
+    let usernameRotations = 0;
+    while ((await usernameRejected(page)) && usernameRotations < 3) {
+      usernameRotations += 1;
+      const fresh = freshUsername(persona);
+      log.warn(
+        `Instagram rejected username "${username}" as taken — trying "${fresh}" (${usernameRotations}/3)`
+      );
+      username = fresh;
+      await capture(`username-rejected-${usernameRotations}`);
+      await fastFill(stagehand, page, {
+        selectors: ['input[name="username"]', 'input[aria-label*="user" i]', 'input[type="search"]'],
+        labelKeywords: ["username"],
+        value: username,
+        describe: "username field",
+        key: "username",
+        log,
+      });
+      // DOB can clear when the form re-renders; re-fill if it's showing again.
+      if (await birthdayPresent(page)) {
+        await fillBirthday(stagehand, page, dob, log);
+        await waitForBirthdaySet(page, dob, { timeoutMs: 4000 });
+      }
+      await sleep(300);
+      await submit();
+      await sleep(2500);
+      await capture(`after-username-rotation-${usernameRotations}`);
+    }
+
     // If IG bounced us back with the birthday still showing (empty-DOB
     // validation error, or it simply didn't take the first time), fill it and
     // resubmit before moving on. This is the exact "submit ignores the birthday,
@@ -2185,6 +2537,14 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
       let minReceivedAt = emailStepAt - 5 * 60 * 1000;
       let confirmed = false;
       let lastErr = null;
+      // Count rejections of codes we KNOW are freshly-issued and correct. Two of
+      // those in a row means IG isn't rejecting a stale code — it has integrity-
+      // flagged this whole signup session and will reject every valid code. There
+      // is nothing more to do in this browser/IP, so we bail fast (rather than
+      // dragging through more resends + long waits) and let the loop start a fresh
+      // session, which is the only thing that can actually change the outcome.
+      let integrityRejections = 0;
+      let integrityFlagged = false;
 
       for (let attempt = 1; attempt <= 3 && !confirmed; attempt++) {
         let hit;
@@ -2193,7 +2553,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
             influencerId,
             to: email,
             receivedAfter: minReceivedAt,
-            timeoutMs: attempt === 1 ? 150000 : 90000,
+            timeoutMs: attempt === 1 ? 150000 : 45000,
           });
         } catch (err) {
           lastErr = err;
@@ -2203,6 +2563,14 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
 
         const { code, receivedAt } = hit;
         log.info(`Email code received (attempt ${attempt}/3)`, code);
+        // A real person never submits the code the instant it lands: they tab to
+        // their mail app, read a six-digit code, and tab back — several seconds.
+        // We poll IMAP aggressively, so without this the code is often entered
+        // <2s after IG issued it, a strong bot signal at the most-scrutinized
+        // step. Dwell a human beat (with idle cursor motion) before typing.
+        await idleMouseDrift(page);
+        await sleep(randomInt(5000, 11000));
+        await idleMouseDrift(page);
         await enterEmailCode(stagehand, page, code, log);
         await sleep(500);
         await pressButton(stagehand, page, {
@@ -2230,21 +2598,62 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
         log.warn(`Email code not accepted (attempt ${attempt}/3)`, { rejected });
         await capture(`email-code-rejected-${attempt}`);
         if (rejected) {
+          // Meta sometimes SOFT-rejects the first submission of an objectively
+          // correct, freshly-issued code (a borderline-trust nudge) yet accepts
+          // the very SAME code on a calm second try. Before burning a resend
+          // (and ~90s waiting for a new email that may never come), clear the
+          // field, dwell a human beat, and re-enter the same code once.
+          if (attempt === 1 && code) {
+            log.info("Re-entering the same fresh code once after a human pause (soft-reject retry)");
+            await idleMouseDrift(page);
+            await sleep(randomInt(3500, 7000));
+            await enterEmailCode(stagehand, page, code, log);
+            await sleep(500);
+            await pressButton(stagehand, page, {
+              texts: ["Continue", "Next", "Confirm", "Submit"],
+              cssFallback: ['button[type="submit"]'],
+              log,
+            });
+            await sleep(2500);
+            await settleCaptcha();
+            for (let i = 0; i < 6 && !confirmed; i++) {
+              if (!(await emailCodeStepPresent(page))) confirmed = true;
+              else await sleep(1000);
+            }
+            if (confirmed) break;
+          }
+          // A freshly-issued, correctly-entered code was rejected. Track it: two
+          // such rejections ⇒ the session is integrity-flagged, so stop burning
+          // resends/long waits and abandon this session for a fresh one.
+          integrityRejections += 1;
+          if (integrityRejections >= 2) {
+            integrityFlagged = true;
+            log.warn(
+              "Instagram rejected 2 freshly-issued, correct codes — this signup session is integrity-flagged. Abandoning it so the loop can retry on a fresh IP/session (the only thing that can change the verdict)."
+            );
+            break;
+          }
+          // Still rejected — the code is genuinely dead; only a strictly-newer
+          // one can work. Bump the cutoff and actually trigger a resend.
           minReceivedAt = (receivedAt || Date.now()) + 1000;
           const resent = await requestNewEmailCode(page);
           if (resent) {
             log.info("Requested a fresh confirmation code (resend)");
             await sleep(4000);
             await settleCaptcha();
+          } else {
+            log.warn("Could not trigger a confirmation-code resend");
           }
         }
       }
 
       await capture(confirmed ? "after-email-code" : "email-code-not-accepted");
       if (!confirmed) {
-        const reason = lastErr
-          ? `no code received (${lastErr.message})`
-          : "Instagram kept rejecting the code as invalid/expired";
+        const reason = integrityFlagged
+          ? "Instagram integrity-flagged the session and rejected correct, freshly-issued codes as 'invalid/expired' (not a code problem — the signup itself was blocked). The most effective fixes are a higher-trust IP (clean residential/mobile proxy, BROWSER_USE_PROXY_COUNTRY/customProxy) and a fresh, reputable email base"
+          : lastErr
+            ? `no code received (${lastErr.message})`
+            : "Instagram kept rejecting the code as invalid/expired";
         // A timeout with a disposable provider almost always means IG delivered
         // nothing because the domain is on Meta's blocklist — point at the fix.
         const hint =
@@ -2334,7 +2743,7 @@ export async function createInstagramAccount({ influencerId, persona, email, onS
         loggedIn: false,
         blockedBySuspension: true,
         sessionUrl,
-        note: `Instagram created the account but immediately ${kind} it ("confirm you're human"). Fresh automated signups are routinely gated pending phone verification — getting a usable account from here needs SMS/phone verification, a higher-trust residential/mobile proxy, and/or account warming. URL: ${finalUrl}`,
+        note: `Instagram created the account but parked it on its "Confirm you're human to use your account" ${kind} check. The flow clicked Continue and attempted the reCAPTCHA / image-code, but it wasn't cleared this run. Fresh automated signups are routinely gated pending phone verification — a usable account from here needs SMS/phone verification, a higher-trust residential/mobile proxy, and/or account warming. URL: ${finalUrl}`,
       };
     }
 

@@ -13,6 +13,7 @@
     "web:dev": "npm --prefix web run dev",
     "test:signup": "node server/scripts/signupTest.js",
     "test:signup:loop": "node server/scripts/signupTest.js --runs 5 --all",
+    "loop:signup": "node server/scripts/signupLoop.mjs",
     "probe:email": "node server/scripts/probeEmail.js",
     "probe:mailosaur": "node server/scripts/probeMailosaur.js",
     "probe:birthday": "node server/scripts/probeBirthday.js",
@@ -35,5 +36,8 @@
     "node-cron": "^3.0.3",
     "pg": "^8.13.1",
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.60.0"
   }
 }
