@@ -84,14 +84,13 @@ export default function InfluencerDetail({
   };
 
   return (
-    <div className="min-h-screen bg-white text-black">
-      <main className="mx-auto max-w-5xl px-5 pb-16 pt-28 sm:px-10 sm:pt-32">
-        <button
-          onClick={onBack}
-          className="mb-8 inline-flex items-center gap-1.5 text-[14px] text-black/50 transition hover:text-black"
-        >
-          <span aria-hidden>←</span> Back to dashboard
-        </button>
+    <div>
+      <button
+        onClick={onBack}
+        className="mb-8 inline-flex items-center gap-1.5 text-[14px] text-black/50 transition hover:text-black"
+      >
+        <span aria-hidden>←</span> Back to influencers
+      </button>
 
         {/* Header: portrait + identity */}
         <section className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center">
@@ -259,7 +258,6 @@ export default function InfluencerDetail({
             </div>
           )}
         </section>
-      </main>
     </div>
   );
 }

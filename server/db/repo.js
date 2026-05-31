@@ -58,14 +58,40 @@ export const generations = {
 };
 
 export const influencers = {
-  create: ({ name, niche, questionnaire, postsPerDay }) =>
+  create: ({
+    userId,
+    name,
+    niche,
+    handle,
+    questionnaire,
+    persona,
+    imageUrl,
+    postsPerDay,
+    status = "draft",
+  }) =>
     one(
-      `INSERT INTO influencers (name, niche, questionnaire, posts_per_day, status)
-       VALUES ($1,$2,$3,$4,'draft') RETURNING *`,
-      [name, niche || null, questionnaire || {}, postsPerDay || 2]
+      `INSERT INTO influencers
+         (user_id, name, niche, handle, questionnaire, persona, image_url, posts_per_day, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        userId || null,
+        name,
+        niche || null,
+        handle || null,
+        questionnaire || {},
+        persona || {},
+        imageUrl || null,
+        postsPerDay || 2,
+        status,
+      ]
     ),
   get: (id) => one(`SELECT * FROM influencers WHERE id=$1`, [id]),
   list: () => many(`SELECT * FROM influencers ORDER BY created_at DESC`),
+  listForUser: (userId) =>
+    many(
+      `SELECT * FROM influencers WHERE user_id=$1 ORDER BY created_at DESC`,
+      [userId]
+    ),
   update: (id, fields) => {
     const keys = Object.keys(fields);
     if (!keys.length) return influencers.get(id);

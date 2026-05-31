@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../lib/authContext";
-import {
-  generateOnboardingCharacter,
-  saveGeneration,
-  type Character,
-} from "../lib/generate";
+import { generateOnboardingCharacter, type Character } from "../lib/generate";
+import { launchInfluencer } from "../lib/influencers";
 
 // The scripted interview. Each question is asked as a chat bubble; the user can
 // tap a suggestion chip or type their own answer. `key` is what we send to the
@@ -209,19 +206,19 @@ export default function Onboarding({
     }
   }
 
-  // Persist the generated influencer. Returns true on success. Accepts an
-  // explicit character so callers (e.g. saving a name edit) can persist updated
-  // data without waiting for the async state update to flush.
+  // Launch the designed character as a real, user-owned influencer that lives in
+  // the dashboard and can be managed (account setup, content, analytics).
+  // Accepts an explicit character so callers (e.g. saving a name edit) can
+  // launch with updated data without waiting for the async state update to
+  // flush. Returns true on success.
   async function persist(toSave?: Character) {
     const subject = toSave ?? character;
     if (!imageUrl || !subject) return false;
+    // Carry the chat answers along so they're stored as the questionnaire.
+    const characterWithAnswers = { ...subject, answers };
     setSaveState("saving");
     try {
-      await saveGeneration(
-        subject.imagePrompt || subject.displayName,
-        imageUrl,
-        subject,
-      );
+      await launchInfluencer(characterWithAnswers, imageUrl);
       setSaveState("saved");
       return true;
     } catch {

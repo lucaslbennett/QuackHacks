@@ -64,6 +64,13 @@ CREATE TABLE IF NOT EXISTS influencers (
 ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_integration_id TEXT;
 ALTER TABLE influencers ADD COLUMN IF NOT EXISTS postiz_platform TEXT NOT NULL DEFAULT 'instagram';
 
+-- Influencers created from the onboarding quiz funnel belong to a user and keep
+-- their generated portrait. Added after the initial release; null for older
+-- (shared/seed) rows.
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE influencers ADD COLUMN IF NOT EXISTS image_url TEXT;
+CREATE INDEX IF NOT EXISTS influencers_user_idx ON influencers (user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS source_accounts (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   influencer_id UUID NOT NULL REFERENCES influencers(id) ON DELETE CASCADE,

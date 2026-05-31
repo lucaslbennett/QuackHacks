@@ -2,7 +2,7 @@ import { Router } from "express";
 import * as repo from "../db/repo.js";
 import * as gemini from "../services/gemini.js";
 import * as fal from "../services/fal.js";
-import { requireAuth } from "../lib/auth.js";
+import { requireAuth, optionalAuth } from "../lib/auth.js";
 import { pick, FIRST_NAMES, LAST_NAMES } from "../lib/util.js";
 
 const router = Router();
@@ -19,6 +19,45 @@ function findAnswer(answers, keyword) {
     q.toLowerCase().includes(keyword)
   );
   return (hit?.[1] || "").trim();
+}
+
+// Builds a fresh-ish post (caption + hashtags + image prompt) straight from a
+// persona, no LLM. Used when Gemini isn't configured so "generate post" still
+// works on the fal key alone. Varies by pillar + a random angle each call.
+const POST_ANGLES = [
+  "a quick tip",
+  "a behind-the-scenes moment",
+  "a relatable everyday struggle",
+  "a question for the comments",
+  "a 'things nobody tells you' angle",
+  "a currently-obsessed recommendation",
+];
+function buildPostFromPersona(persona) {
+  const niche = persona.niche || persona.displayName || "lifestyle";
+  const pillars =
+    Array.isArray(persona.contentPillars) && persona.contentPillars.length
+      ? persona.contentPillars
+      : [niche];
+  const pillar = pillars[Math.floor(Math.random() * pillars.length)];
+  const angle = POST_ANGLES[Math.floor(Math.random() * POST_ANGLES.length)];
+  const slug = String(niche).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 14) || "creator";
+
+  const caption = `${pillar} — ${angle}. ${persona.bio || `More ${niche} every week.`} What do you want to see next? 👇`;
+  const hashtags = Array.from(
+    new Set([
+      slug,
+      ...String(pillar).toLowerCase().split(/\s+/).filter(Boolean),
+      "creator",
+      "fyp",
+      "reels",
+    ])
+  ).slice(0, 10);
+  const imagePrompt =
+    persona.imagePrompt ||
+    [persona.appearance, persona.aesthetic].filter(Boolean).join(". ") ||
+    `${niche} influencer, ${pillar} scene, natural lighting`;
+
+  return { caption, hashtags, imagePrompt, altText: `${niche} post`, title: pillar };
 }
 
 // Builds a usable character straight from the chat answers, no LLM. Used when
@@ -153,6 +192,7 @@ router.post(
 // into Instagram until Browserbase auto-posting is wired up.
 router.post(
   "/post",
+  optionalAuth,
   asyncH(async (req, res) => {
     // The persona shape we store on a saved generation (Character). Older saved
     // rows may have an empty persona, so fall back to the prompt text.
@@ -161,6 +201,9 @@ router.post(
         ? req.body.persona
         : {};
     const fallbackPrompt = String(req.body.prompt || "").trim();
+    // When the panel passes an owned influencerId, the post is persisted to that
+    // influencer's content history.
+    const influencerId = req.body.influencerId || null;
 
     const hasPersona = persona && Object.keys(persona).length > 0;
     if (!hasPersona && !fallbackPrompt) {
@@ -168,7 +211,7 @@ router.post(
         .status(400)
         .json({ ok: false, error: "persona or prompt is required" });
     }
-    if (!gemini.isConfigured()) {
+    if (!fal.isConfigured() && !gemini.isConfigured()) {
       return res
         .status(503)
         .json({ ok: false, error: "post generation is not configured" });
@@ -186,9 +229,11 @@ router.post(
           aesthetic: fallbackPrompt,
         };
 
-    const post = await gemini.generatePostContent({
-      persona: effectivePersona,
-    });
+    // Caption/hashtags via Gemini when available; otherwise a persona-derived
+    // fallback so the post still works on the fal key alone.
+    const post = gemini.isConfigured()
+      ? await gemini.generatePostContent({ persona: effectivePersona })
+      : buildPostFromPersona(effectivePersona);
 
     // Render the post image from the scene prompt the writer produced. Prefer
     // fal Nano Banana (matches onboarding), fall back to the Gemini image path.
@@ -209,8 +254,37 @@ router.post(
     // a blank line, then the hashtags.
     const copyText = [post.caption, hashtagLine].filter(Boolean).join("\n\n");
 
+    // Persist to the influencer's content history when the caller owns it. The
+    // image URL is stored in image_paths (no video for an image post); status
+    // "ready" means it's generated and ready to publish. Best-effort: a save
+    // failure never blocks returning the generated post to the user.
+    let contentId = null;
+    if (influencerId && req.user) {
+      try {
+        const inf = await repo.influencers.get(influencerId);
+        if (inf && inf.user_id === req.user.id) {
+          const item = await repo.content.create({
+            influencerId,
+            topic: post.title || null,
+            status: "ready",
+          });
+          await repo.content.update(item.id, {
+            title: post.title || null,
+            caption: post.caption,
+            hashtags: post.hashtags || [],
+            image_paths: [image.url],
+            meta: { altText: post.altText, imagePrompt, source: "quick-post" },
+          });
+          contentId = item.id;
+        }
+      } catch {
+        /* non-fatal: still return the generated post below */
+      }
+    }
+
     res.json({
       ok: true,
+      contentId,
       imageUrl: image.url,
       caption: post.caption,
       hashtags: post.hashtags,

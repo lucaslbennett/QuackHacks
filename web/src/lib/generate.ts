@@ -1,5 +1,12 @@
 import { getToken } from "./auth";
 
+// Bearer header when signed in; empty object otherwise (request still succeeds
+// for the public/optional-auth endpoints).
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export interface Generation {
   id: string;
   prompt: string;
@@ -19,6 +26,8 @@ export interface GeneratedPost {
   imagePrompt: string;
   // Caption + hashtags formatted as one block, ready to paste into Instagram.
   copyText: string;
+  // Set when the post was persisted to an influencer's content history.
+  contentId: string | null;
 }
 
 interface GenerateResponse {
@@ -49,6 +58,9 @@ export interface Character {
     hashtagThemes: string[];
   };
   imagePrompt: string;
+  // The raw onboarding answers, carried through so they're stored as the
+  // influencer's questionnaire. Optional: only set when launching.
+  answers?: Record<string, string>;
 }
 
 interface OnboardingResponse {
@@ -95,14 +107,17 @@ export async function generateInfluencerImage(
 
 // Public: generate a fresh, varied Instagram post (image + caption + hashtags)
 // for an existing influencer. Pass the saved persona when available; otherwise
-// the prompt is used as a fallback brief. Each call returns a distinct post.
+// the prompt is used as a fallback brief. When `influencerId` is given (and the
+// caller owns it), the post is persisted to that influencer's content history
+// and the returned contentId is set. Each call returns a distinct post.
 export async function generatePost(input: {
   persona?: Partial<Character>;
   prompt?: string;
+  influencerId?: string;
 }): Promise<GeneratedPost> {
   const res = await fetch("/api/generate/post", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
   const data = await res.json().catch(() => ({ ok: false }));
@@ -117,6 +132,7 @@ export async function generatePost(input: {
     altText: data.altText ?? "",
     imagePrompt: data.imagePrompt ?? "",
     copyText: data.copyText ?? "",
+    contentId: data.contentId ?? null,
   };
 }
 
