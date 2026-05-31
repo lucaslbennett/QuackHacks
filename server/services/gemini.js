@@ -20,7 +20,9 @@ export function isConfigured() {
 }
 
 // Low level helper that asks Gemini for JSON and parses it defensively.
-async function completeJson({ system, prompt, maxTokens = 2000 }) {
+// `temperature` lets callers crank up variety (e.g. fresh post captions) while
+// most callers keep the default for stable, on-brand output.
+async function completeJson({ system, prompt, maxTokens = 2000, temperature }) {
   const c = getClient();
   const res = await c.models.generateContent({
     model: config.gemini.model,
@@ -29,6 +31,7 @@ async function completeJson({ system, prompt, maxTokens = 2000 }) {
       systemInstruction: system,
       maxOutputTokens: maxTokens,
       responseMimeType: "application/json",
+      ...(temperature !== undefined ? { temperature } : {}),
       // Flash-Lite is the lightweight tier; keep thinking off so the whole
       // token budget is spent on the JSON answer (lower latency + cost).
       thinkingConfig: { thinkingBudget: 0 },
@@ -183,6 +186,94 @@ Return JSON:
 }`;
 
   return completeJson({ system, prompt, maxTokens: 1500 });
+}
+
+// A grab-bag of angles the post generator picks from at random so two
+// back-to-back posts for the same persona never feel like clones.
+const POST_ANGLES = [
+  "a candid behind-the-scenes moment",
+  "a relatable everyday struggle with a hopeful twist",
+  "a bold hot-take or unpopular opinion",
+  "a quick tip or mini how-to",
+  "a question that invites followers to reply in the comments",
+  "a gratitude / reflection moment",
+  "a 'storytime' style anecdote",
+  "a before/after or transformation framing",
+  "a myth-busting or 'things nobody tells you' angle",
+  "a playful, humorous take",
+  "a motivational push to start something today",
+  "a 'currently obsessed with' recommendation",
+];
+
+const POST_TIMES = ["morning", "midday", "golden hour", "late night"];
+
+const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// Designs a fresh, natural-feeling Instagram post (caption + hashtags + image
+// prompt) for an existing persona. Deliberately high-variety: a random angle,
+// time-of-day and seed plus a high temperature so repeated calls produce
+// distinct, human-sounding posts rather than near-duplicates.
+export async function generatePostContent({ persona }) {
+  log.info("Generating post content for", persona?.displayName || "influencer");
+
+  const angle = pickRandom(POST_ANGLES);
+  const timeOfDay = pickRandom(POST_TIMES);
+  const seed = Math.random().toString(36).slice(2, 8);
+
+  const system =
+    "You write authentic, natural-sounding Instagram posts for a specific AI influencer persona. " +
+    "You sound like a real person, not a marketer: varied sentence length, the occasional emoji, " +
+    "no robotic templates, no hashtag stuffing inside the caption body. " +
+    "Every post you write must feel different from the last. Respond with strict JSON only.";
+
+  const prompt = `Write ONE brand-new Instagram post for this persona.
+
+Persona:
+${JSON.stringify(persona || {}, null, 2)}
+
+Constraints for THIS post (use them to stay fresh):
+- Creative angle: ${angle}
+- Time of day / mood: ${timeOfDay}
+- Variety seed (ignore meaning, just use it to be different): ${seed}
+
+Rules:
+- The caption must sound human and natural, on-brand for the persona's voice and niche.
+- Do NOT reuse the persona's sample posts verbatim; write something new.
+- Keep hashtags OUT of the caption body. Put them only in the "hashtags" array.
+- Provide a vivid image generation prompt that matches the persona's appearance/aesthetic
+  and depicts a concrete, photo-worthy scene for THIS specific post (not just a portrait).
+
+Return JSON with this exact shape:
+{
+  "caption": string,            // the post caption, natural, 1-4 short paragraphs, light emoji ok, NO hashtags
+  "hashtags": string[10],       // 8-12 relevant hashtags, lowercase, WITHOUT the # symbol
+  "imagePrompt": string,        // rich scene description for the post image
+  "altText": string             // short accessibility description of the image
+}`;
+
+  const data = await completeJson({
+    system,
+    prompt,
+    maxTokens: 1200,
+    temperature: 1.15,
+  });
+
+  // Normalize hashtags: strip leading #, drop empties, de-dupe.
+  const hashtags = Array.from(
+    new Set(
+      (Array.isArray(data.hashtags) ? data.hashtags : [])
+        .map((h) => String(h).trim().replace(/^#+/, "").replace(/\s+/g, ""))
+        .filter(Boolean)
+    )
+  );
+
+  return {
+    caption: String(data.caption || "").trim(),
+    hashtags,
+    imagePrompt: String(data.imagePrompt || "").trim(),
+    altText: String(data.altText || "").trim(),
+    angle,
+  };
 }
 
 // Generates an influencer portrait with Nano Banana Pro (Gemini 3 Pro Image)

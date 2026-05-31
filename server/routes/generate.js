@@ -132,6 +132,82 @@ router.post(
   })
 );
 
+// Public: generate a brand-new, varied Instagram post (image + caption +
+// hashtags) for an existing persona. Designed to be called repeatedly from an
+// influencer's detail page; each call produces a fresh, natural-feeling post.
+// The response includes a ready-to-paste block so it can be dropped straight
+// into Instagram until Browserbase auto-posting is wired up.
+router.post(
+  "/post",
+  asyncH(async (req, res) => {
+    // The persona shape we store on a saved generation (Character). Older saved
+    // rows may have an empty persona, so fall back to the prompt text.
+    const persona =
+      req.body.persona && typeof req.body.persona === "object"
+        ? req.body.persona
+        : {};
+    const fallbackPrompt = String(req.body.prompt || "").trim();
+
+    const hasPersona = persona && Object.keys(persona).length > 0;
+    if (!hasPersona && !fallbackPrompt) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "persona or prompt is required" });
+    }
+    if (!gemini.isConfigured()) {
+      return res
+        .status(503)
+        .json({ ok: false, error: "post generation is not configured" });
+    }
+
+    // If we only have a prompt (no structured persona), build a minimal persona
+    // so the generator still has something on-brand to work from.
+    const effectivePersona = hasPersona
+      ? persona
+      : {
+          displayName: "Influencer",
+          niche: fallbackPrompt,
+          personality: fallbackPrompt,
+          appearance: fallbackPrompt,
+          aesthetic: fallbackPrompt,
+        };
+
+    const post = await gemini.generatePostContent({
+      persona: effectivePersona,
+    });
+
+    // Render the post image from the scene prompt the writer produced. Prefer
+    // fal Nano Banana (matches onboarding), fall back to the Gemini image path.
+    const imagePrompt =
+      post.imagePrompt ||
+      effectivePersona.imagePrompt ||
+      [effectivePersona.appearance, effectivePersona.aesthetic]
+        .filter(Boolean)
+        .join(". ") ||
+      fallbackPrompt;
+
+    const image = fal.isConfigured()
+      ? await fal.generateNanoBananaImage({ prompt: imagePrompt, label: "post" })
+      : await gemini.generateInfluencerImage({ prompt: imagePrompt, label: "post" });
+
+    const hashtagLine = post.hashtags.map((h) => `#${h}`).join(" ");
+    // A single block that's trivial to copy and paste into Instagram: caption,
+    // a blank line, then the hashtags.
+    const copyText = [post.caption, hashtagLine].filter(Boolean).join("\n\n");
+
+    res.json({
+      ok: true,
+      imageUrl: image.url,
+      caption: post.caption,
+      hashtags: post.hashtags,
+      hashtagLine,
+      altText: post.altText,
+      imagePrompt,
+      copyText,
+    });
+  })
+);
+
 // Auth required: persist a generated image to the user's dashboard.
 router.post(
   "/save",

@@ -56,7 +56,11 @@ function Sparkline() {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({
+  onSelectInfluencer,
+}: {
+  onSelectInfluencer?: (g: Generation) => void;
+}) {
   const { user } = useAuth();
   const name = user?.name || user?.email?.split("@")[0] || "there";
   const [saved, setSaved] = useState<Generation[]>([]);
@@ -127,18 +131,34 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {saved.map((g) => (
-                <div
-                  key={g.id}
-                  className="overflow-hidden rounded-2xl border border-black/10"
-                >
-                  <img
-                    src={g.image_url}
-                    alt={g.prompt}
-                    className="aspect-square w-full object-cover"
-                  />
-                </div>
-              ))}
+              {saved.map((g) => {
+                const label = g.persona?.displayName || g.prompt;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => onSelectInfluencer?.(g)}
+                    title={`View ${label}`}
+                    className="group relative block overflow-hidden rounded-2xl border border-black/10 text-left transition-transform duration-300 ease-out hover:z-10 hover:-translate-y-1 hover:scale-[1.04] hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5b73d6]"
+                  >
+                    <img
+                      src={g.image_url}
+                      alt={g.prompt}
+                      className="aspect-square w-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 translate-y-1 bg-gradient-to-t from-black/70 to-transparent p-3 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                      <p className="truncate text-[13px] font-medium text-white">
+                        {g.persona?.displayName || "View influencer"}
+                      </p>
+                      {g.persona?.niche && (
+                        <p className="truncate text-[11px] capitalize text-white/70">
+                          {g.persona.niche}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </section>

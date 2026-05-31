@@ -4,12 +4,17 @@ import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import AuthModal, { type AuthMode } from "./components/AuthModal";
 import Dashboard from "./components/Dashboard";
+import InfluencerDetail from "./components/InfluencerDetail";
 import Onboarding from "./components/Onboarding";
 import TestPanel from "./components/TestPanel";
+import type { Generation } from "./lib/generate";
 
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  // The influencer whose detail page is open (null = dashboard grid view).
+  const [selectedInfluencer, setSelectedInfluencer] =
+    useState<Generation | null>(null);
   // null = closed; string (possibly empty) = onboarding open, seeded with the
   // text the user typed in the hero composer.
   const [onboardSeed, setOnboardSeed] = useState<string | null>(null);
@@ -21,6 +26,7 @@ export default function App() {
 
   const goHome = () => {
     setShowDashboard(false);
+    setSelectedInfluencer(null);
     closeOnboarding();
   };
 
@@ -36,19 +42,40 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, [onboardingOpen]);
 
+  // Same pattern for the influencer detail page: browser Back returns to the
+  // dashboard grid rather than leaving the app.
+  const detailOpen = selectedInfluencer !== null;
+  useEffect(() => {
+    if (!detailOpen) return;
+    window.history.pushState({ influencerDetail: true }, "");
+    const onPop = () => setSelectedInfluencer(null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [detailOpen]);
+
   return (
     <AuthProvider>
       <div className="relative min-h-screen overflow-hidden bg-white">
         {/* Single, always-mounted header so it never shifts between tabs. */}
         <Navbar
           onAuth={setAuthMode}
-          onDashboard={() => setShowDashboard(true)}
+          onDashboard={() => {
+            setSelectedInfluencer(null);
+            setShowDashboard(true);
+          }}
           onHome={goHome}
           inDashboard={showDashboard}
         />
 
         {showDashboard ? (
-          <Dashboard />
+          selectedInfluencer ? (
+            <InfluencerDetail
+              influencer={selectedInfluencer}
+              onBack={() => setSelectedInfluencer(null)}
+            />
+          ) : (
+            <Dashboard onSelectInfluencer={setSelectedInfluencer} />
+          )
         ) : (
           <>
             <Hero onGenerate={setOnboardSeed} />

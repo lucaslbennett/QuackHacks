@@ -5,6 +5,20 @@ export interface Generation {
   prompt: string;
   image_url: string;
   created_at: string;
+  // The full character saved alongside the image (empty object for older rows).
+  persona?: Partial<Character>;
+}
+
+// A freshly generated, ready-to-post Instagram post for an influencer.
+export interface GeneratedPost {
+  imageUrl: string;
+  caption: string;
+  hashtags: string[];
+  hashtagLine: string;
+  altText: string;
+  imagePrompt: string;
+  // Caption + hashtags formatted as one block, ready to paste into Instagram.
+  copyText: string;
 }
 
 interface GenerateResponse {
@@ -75,6 +89,33 @@ export async function generateInfluencerImage(
     throw new Error(data.error || `Generation failed (${res.status})`);
   }
   return { prompt: data.prompt ?? prompt, imageUrl: data.imageUrl };
+}
+
+// Public: generate a fresh, varied Instagram post (image + caption + hashtags)
+// for an existing influencer. Pass the saved persona when available; otherwise
+// the prompt is used as a fallback brief. Each call returns a distinct post.
+export async function generatePost(input: {
+  persona?: Partial<Character>;
+  prompt?: string;
+}): Promise<GeneratedPost> {
+  const res = await fetch("/api/generate/post", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json().catch(() => ({ ok: false }));
+  if (!res.ok || data.ok === false || !data.imageUrl) {
+    throw new Error(data.error || `Post generation failed (${res.status})`);
+  }
+  return {
+    imageUrl: data.imageUrl,
+    caption: data.caption ?? "",
+    hashtags: Array.isArray(data.hashtags) ? data.hashtags : [],
+    hashtagLine: data.hashtagLine ?? "",
+    altText: data.altText ?? "",
+    imagePrompt: data.imagePrompt ?? "",
+    copyText: data.copyText ?? "",
+  };
 }
 
 // Auth required: persist a generated image (and optional character) to the
